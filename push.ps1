@@ -76,37 +76,37 @@ Write-Host "Menambahkan file..." -ForegroundColor Cyan
 git add .
 
 # ==========================================
-# Check Changes
+# Commit
 # ==========================================
 
-$changes = git status --porcelain
+Write-Host ""
+Write-Host "Membuat commit..." -ForegroundColor Cyan
 
-if (-not $changes) {
-    Write-Host ""
-    Write-Host "Tidak ada perubahan untuk di-commit." -ForegroundColor Yellow
+$changes = git diff --cached --name-only
+
+if ($changes) {
+    git commit -m "vercel deploy commit v.1"
+    Write-Host "Commit berhasil dibuat." -ForegroundColor Green
 }
 else {
-
-    # ==========================================
-    # Commit
-    # ==========================================
-
-    Write-Host ""
-    Write-Host "Membuat commit..." -ForegroundColor Cyan
-
-    git commit -m "vercel deploy commit"
-
-    # ==========================================
-    # Push
-    # ==========================================
-
-    Write-Host ""
-    Write-Host "Push ke GitHub..." -ForegroundColor Cyan
-
-    git push -u origin main
+    Write-Host "Tidak ada perubahan baru untuk di-commit." -ForegroundColor Yellow
 }
+
+# ==========================================
+# Push
+# ==========================================
+
+Write-Host ""
+Write-Host "Push ke GitHub..." -ForegroundColor Cyan
+
+git push -u origin main
+
+# ==========================================
+# Finish
+# ==========================================
 
 Write-Host ""
 Write-Host "======================================" -ForegroundColor Green
-Write-Host " Git process selesai!" -ForegroundColor Green
+Write-Host " Push ke GitHub berhasil!" -ForegroundColor Green
+Write-Host " Branch: main" -ForegroundColor Green
 Write-Host "======================================" -ForegroundColor Green

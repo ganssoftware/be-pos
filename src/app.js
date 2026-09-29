@@ -1,5 +1,5 @@
 require("./config/env");
-const pool = require("./config/db");
+const supabase = require("./config/supabase");
 
 const express = require("express");
 const cors = require("cors");
