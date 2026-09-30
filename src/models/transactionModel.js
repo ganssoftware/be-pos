@@ -352,6 +352,8 @@ async function findDetailById(
       transaction_id,
       method,
       amount,
+      amount_received,
+      change_amount,
       reference_number,
       paid_at
     FROM payments
