@@ -11,7 +11,7 @@ async function storeMiddleware(req, res, next) {
 
     const storeId =
       req.params.storeId ||
-      req.body.store_id ||
+      req.body?.store_id ||
       req.query.store_id ||
       req.headers["x-store-id"];
 
