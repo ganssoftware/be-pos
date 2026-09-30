@@ -153,6 +153,7 @@ async function findProductForUpdate(
       p.id,
       p.name,
       p.sku,
+      p.selling_price,
       p.is_active
     FROM products p
     WHERE p.id = $1

@@ -288,7 +288,6 @@ async function checkout({
     console.log("total:", total);
     console.log("payments:", payments);
     console.log("paymentTotal:", paymentTotal);
-    console.log("paymentDifference:", paymentDifference);
     console.log("=====================");
 
     // Toleransi untuk floating point JS
@@ -296,6 +295,7 @@ async function checkout({
       (paymentTotal - total).toFixed(2)
     );
 
+    console.log("paymentDifference:", paymentDifference);
     if (paymentDifference !== 0) {
       throw new Error(
         "Total pembayaran harus sama dengan total transaksi"
