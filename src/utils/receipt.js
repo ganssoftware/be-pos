@@ -69,6 +69,26 @@ function formatReceipt(transaction) {
       `${formatPaymentMethod(payment.method)}: ${formatMoney(payment.amount)}`
     );
 
+    if (
+      payment.method === "CASH"
+    ) {
+      const amountReceived = Number(
+        payment.amount_received || payment.amount
+      );
+
+      const changeAmount = Number(
+        payment.change_amount || 0
+      );
+
+      lines.push(
+        `Diterima : ${formatMoney(amountReceived)}`
+      );
+
+      lines.push(
+        `Kembalian: ${formatMoney(changeAmount)}`
+      );
+    }
+
     if (payment.reference_number) {
       lines.push(
         `Ref      : ${payment.reference_number}`

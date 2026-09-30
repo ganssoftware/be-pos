@@ -247,7 +247,9 @@ async function checkout({
     }
 
     let paymentTotal = 0;
-    let cashPayment = 0;
+    let cashExpectedCash = 0;
+
+    const processedPayments = [];
 
     for (const payment of payments) {
       const method = String(
@@ -274,28 +276,108 @@ async function checkout({
         );
       }
 
+      let amountReceived;
+
+      // -----------------------------------------------
+      // CASH
+      // -----------------------------------------------
+
+      if (method === "CASH") {
+        amountReceived = parsePositiveNumber(
+          payment.amount_received
+        );
+
+        if (amountReceived === null) {
+          throw new Error(
+            "Uang diterima untuk CASH wajib diisi"
+          );
+        }
+
+        if (amountReceived < amount) {
+          throw new Error(
+            "Uang CASH yang diterima kurang dari nominal pembayaran"
+          );
+        }
+      }
+
+      // -----------------------------------------------
+      // NON CASH
+      // -----------------------------------------------
+
+      else {
+        amountReceived = parsePositiveNumber(
+          payment.amount_received ?? amount
+        );
+
+        if (amountReceived === null) {
+          throw new Error(
+            "Nominal pembayaran tidak valid"
+          );
+        }
+
+        if (
+          Number(
+            (amountReceived - amount).toFixed(2)
+          ) !== 0
+        ) {
+          throw new Error(
+            `Metode ${method} tidak dapat menerima pembayaran melebihi nominal transaksi`
+          );
+        }
+      }
+
+      const changeAmount =
+        method === "CASH"
+          ? Number(
+            (amountReceived - amount).toFixed(2)
+          )
+          : 0;
+
       paymentTotal += amount;
 
       if (method === "CASH") {
-        cashPayment += amount;
+        cashExpectedCash += amount;
       }
+
+      processedPayments.push({
+        method,
+        amount,
+        amountReceived,
+        changeAmount,
+        referenceNumber:
+          payment.reference_number || null,
+      });
     }
 
     console.log("=== PAYMENT DEBUG ===");
     console.log("subtotal:", subtotal);
-    console.log("transactionDiscount:", transactionDiscount);
-    console.log("transactionTax:", transactionTax);
+    console.log(
+      "transactionDiscount:",
+      transactionDiscount
+    );
+    console.log(
+      "transactionTax:",
+      transactionTax
+    );
     console.log("total:", total);
-    console.log("payments:", payments);
+    console.log("payments:", processedPayments);
     console.log("paymentTotal:", paymentTotal);
+    console.log(
+      "cashExpectedCash:",
+      cashExpectedCash
+    );
     console.log("=====================");
 
-    // Toleransi untuk floating point JS
+    // Toleransi floating point JS
     const paymentDifference = Number(
       (paymentTotal - total).toFixed(2)
     );
 
-    console.log("paymentDifference:", paymentDifference);
+    console.log(
+      "paymentDifference:",
+      paymentDifference
+    );
+
     if (paymentDifference !== 0) {
       throw new Error(
         "Total pembayaran harus sama dengan total transaksi"
@@ -384,24 +466,20 @@ async function checkout({
 
     const createdPayments = [];
 
-    for (const payment of payments) {
-      const method = String(
-        payment.method
-      )
-        .trim()
-        .toUpperCase();
-
+    for (const payment of processedPayments) {
       const createdPayment =
         await paymentModel.create(
           client,
           {
             transactionId: transaction.id,
-            method,
-            amount: Number(
-              payment.amount
-            ),
+            method: payment.method,
+            amount: payment.amount,
+            amountReceived:
+              payment.amountReceived,
+            changeAmount:
+              payment.changeAmount,
             referenceNumber:
-              payment.reference_number,
+              payment.referenceNumber,
           }
         );
 
@@ -414,12 +492,12 @@ async function checkout({
     // 9. CASH → tambah expected_cash
     // --------------------------------------------------
 
-    if (cashPayment > 0) {
+    if (cashExpectedCash > 0) {
       const updatedShift =
         await shiftModel.increaseExpectedCash(
           client,
           shift.id,
-          cashPayment
+          cashExpectedCash
         );
 
       if (!updatedShift) {
@@ -441,10 +519,10 @@ async function checkout({
       payments: createdPayments,
       shift: {
         id: shift.id,
-        cash_payment: cashPayment,
+        cash_payment: cashExpectedCash,
         expected_cash:
           Number(shift.expected_cash) +
-          cashPayment,
+          cashExpectedCash,
       },
     };
   } catch (error) {

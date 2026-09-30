@@ -6,6 +6,8 @@ async function create(
     transactionId,
     method,
     amount,
+    amountReceived,
+    changeAmount,
     referenceNumber,
   }
 ) {
@@ -14,14 +16,18 @@ async function create(
       transaction_id,
       method,
       amount,
+      amount_received,
+      change_amount,
       reference_number
     )
-    VALUES ($1, $2, $3, $4)
+    VALUES ($1, $2, $3, $4, $5, $6)
     RETURNING
       id,
       transaction_id,
       method,
       amount,
+      amount_received,
+      change_amount,
       reference_number,
       paid_at
   `;
@@ -30,6 +36,8 @@ async function create(
     transactionId,
     method,
     amount,
+    amountReceived,
+    changeAmount,
     referenceNumber || null,
   ]);
 
@@ -45,6 +53,8 @@ async function findByTransactionId(
       transaction_id,
       method,
       amount,
+      amount_received,
+      change_amount,
       reference_number,
       paid_at
     FROM payments
@@ -60,13 +70,18 @@ async function findByTransactionId(
   return result.rows;
 }
 
-async function findByTransactionIdForUpdate(client, transactionId) {
+async function findByTransactionIdForUpdate(
+  client,
+  transactionId
+) {
   const query = `
     SELECT
       id,
       transaction_id,
       method,
       amount,
+      amount_received,
+      change_amount,
       reference_number,
       paid_at
     FROM payments
@@ -75,7 +90,10 @@ async function findByTransactionIdForUpdate(client, transactionId) {
     FOR UPDATE
   `;
 
-  const result = await client.query(query, [transactionId]);
+  const result = await client.query(
+    query,
+    [transactionId]
+  );
 
   return result.rows;
 }
