@@ -281,6 +281,16 @@ async function checkout({
       }
     }
 
+    console.log("=== PAYMENT DEBUG ===");
+    console.log("subtotal:", subtotal);
+    console.log("transactionDiscount:", transactionDiscount);
+    console.log("transactionTax:", transactionTax);
+    console.log("total:", total);
+    console.log("payments:", payments);
+    console.log("paymentTotal:", paymentTotal);
+    console.log("paymentDifference:", paymentDifference);
+    console.log("=====================");
+
     // Toleransi untuk floating point JS
     const paymentDifference = Number(
       (paymentTotal - total).toFixed(2)

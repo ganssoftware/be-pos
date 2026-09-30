@@ -85,7 +85,7 @@ Write-Host "Membuat commit..." -ForegroundColor Cyan
 $changes = git diff --cached --name-only
 
 if ($changes) {
-    git commit -m "vercel deploy commit v.1.0.1"
+    git commit -m "fix transaction service"
     Write-Host "Commit berhasil dibuat." -ForegroundColor Green
 }
 else {
