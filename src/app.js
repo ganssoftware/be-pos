@@ -6,6 +6,7 @@ const express = require("express");
 const cors = require("cors");
 
 const authRoutes = require("./routes/authRoutes");
+const storeRoutes = require("./routes/storeRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
 const unitRoutes = require("./routes/unitRoutes");
 const inventoryRoutes = require("./routes/inventoryRoutes");
@@ -60,6 +61,7 @@ app.get("/api/health", async (req, res) => {
 });
 
 app.use("/api/auth", authRoutes);
+app.use("/api/stores", storeRoutes);
 app.use("/api/categories", categoryRoutes);
 app.use("/api/units", unitRoutes);
 app.use("/api/products", productRoutes);
