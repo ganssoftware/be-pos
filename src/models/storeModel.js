@@ -8,10 +8,10 @@ async function findStoresByUserId(userId) {
       s.code,
       s.address,
       s.phone,
-      s.email,
       s.is_active
     FROM stores s
-    INNER JOIN store_users su ON su.store_id = s.id
+    INNER JOIN store_users su
+      ON su.store_id = s.id
     WHERE su.user_id = $1
       AND s.is_active = true
     ORDER BY s.name ASC
@@ -26,7 +26,8 @@ async function userHasStoreAccess(userId, storeId) {
   const query = `
     SELECT 1
     FROM store_users su
-    INNER JOIN stores s ON s.id = su.store_id
+    INNER JOIN stores s
+      ON s.id = su.store_id
     WHERE su.user_id = $1
       AND su.store_id = $2
       AND s.is_active = true
