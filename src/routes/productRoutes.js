@@ -4,6 +4,7 @@ const productController = require("../controllers/productController");
 const authMiddleware = require("../middleware/authMiddleware");
 const roleMiddleware = require("../middleware/roleMiddleware");
 const storeMiddleware = require("../middleware/storeMiddleware");
+const uploadProduct = require("../middleware/uploadProduct");
 
 const router = express.Router();
 
@@ -29,6 +30,12 @@ router.get(
 router.post(
   "/",
   productController.createProduct
+);
+
+router.post(
+  "/:id/image",
+  uploadProduct.single("image"),
+  productController.uploadProductImage
 );
 
 router.put(

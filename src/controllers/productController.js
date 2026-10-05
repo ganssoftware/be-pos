@@ -1,5 +1,6 @@
 const productModel = require("../models/productModel");
 const pool = require("../config/db");
+const { supabaseAdmin } = require("../config/supabase");
 
 function parseNonNegativeNumber(value, fieldName) {
   const number = Number(value);
@@ -297,6 +298,122 @@ async function createProduct(req, res, next) {
   }
 }
 
+const uploadProductImage = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const storeId = req.store.id;
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Foto produk wajib dipilih",
+      });
+    }
+
+    const product = await productModel.findById(
+      id,
+      storeId
+    );
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Produk tidak ditemukan",
+      });
+    }
+
+    const extensionMap = {
+      "image/jpeg": "jpg",
+      "image/png": "png",
+      "image/webp": "webp",
+    };
+
+    const extension =
+      extensionMap[req.file.mimetype];
+
+    const fileName =
+      `${Date.now()}-${Math.random()
+        .toString(36)
+        .substring(2, 10)}.${extension}`;
+
+    const filePath =
+      `${storeId}/products/${id}/${fileName}`;
+
+    const { error: uploadError } =
+      await supabaseAdmin.storage
+        .from("product-images")
+        .upload(
+          filePath,
+          req.file.buffer,
+          {
+            contentType: req.file.mimetype,
+            upsert: false,
+          }
+        );
+
+    if (uploadError) {
+      console.error(
+        "Supabase product image upload error:",
+        uploadError
+      );
+
+      return res.status(500).json({
+        success: false,
+        message: "Gagal upload foto produk",
+      });
+    }
+
+    const {
+      data: publicUrlData,
+    } = supabaseAdmin.storage
+      .from("product-images")
+      .getPublicUrl(filePath);
+
+    const imageUrl =
+      publicUrlData.publicUrl;
+
+    const updatedProduct =
+      await productModel.update(
+        id,
+        storeId,
+        {
+          category_id: product.category_id,
+          unit_id: product.unit_id,
+          sku: product.sku,
+          barcode: product.barcode,
+          name: product.name,
+          description: product.description,
+          purchase_price:
+            product.purchase_price,
+          selling_price:
+            product.selling_price,
+          minimum_stock:
+            product.minimum_stock,
+          image_url: imageUrl,
+          is_active: product.is_active,
+        }
+      );
+
+    return res.json({
+      success: true,
+      message: "Foto produk berhasil diupload",
+      data: updatedProduct,
+    });
+  } catch (error) {
+    console.error(
+      "uploadProductImage:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        error.message ||
+        "Gagal upload foto produk",
+    });
+  }
+};
+
 async function updateProduct(req, res, next) {
   try {
     const data = validateProductData(req.body);
@@ -389,6 +506,7 @@ module.exports = {
   getProductById,
   getProductByBarcode,
   createProduct,
+  uploadProductImage,
   updateProduct,
   deleteProduct,
 };
