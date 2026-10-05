@@ -301,7 +301,7 @@ async function createProduct(req, res, next) {
 const uploadProductImage = async (req, res) => {
   try {
     const { id } = req.params;
-    const storeId = req.store.id;
+    const storeId = req.storeId;
 
     if (!req.file) {
       return res.status(400).json({
@@ -383,12 +383,9 @@ const uploadProductImage = async (req, res) => {
           barcode: product.barcode,
           name: product.name,
           description: product.description,
-          purchase_price:
-            product.purchase_price,
-          selling_price:
-            product.selling_price,
-          minimum_stock:
-            product.minimum_stock,
+          purchase_price: product.purchase_price,
+          selling_price: product.selling_price,
+          minimum_stock: product.minimum_stock,
           image_url: imageUrl,
           is_active: product.is_active,
         }
