@@ -315,6 +315,40 @@ async function deactivate(id, storeId) {
   return result.rows[0] || null;
 }
 
+const updateImage = async (id, storeId, imageUrl) => {
+  const result = await pool.query(
+    `
+      UPDATE products
+      SET
+        image_url = $1,
+        updated_at = NOW()
+      WHERE id = $2
+        AND store_id = $3
+      RETURNING
+        id,
+        store_id,
+        sku,
+        barcode,
+        name,
+        description,
+        purchase_price,
+        selling_price,
+        minimum_stock,
+        image_url,
+        is_active,
+        created_at,
+        updated_at
+    `,
+    [
+      imageUrl,
+      id,
+      storeId,
+    ]
+  );
+
+  return result.rows[0] || null;
+};
+
 module.exports = {
   findAll,
   findById,
@@ -323,4 +357,5 @@ module.exports = {
   update,
   remove,
   deactivate,
+  updateImage,
 };

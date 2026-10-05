@@ -373,22 +373,10 @@ const uploadProductImage = async (req, res) => {
       publicUrlData.publicUrl;
 
     const updatedProduct =
-      await productModel.update(
+      await productModel.updateImage(
         id,
         storeId,
-        {
-          category_id: product.category_id,
-          unit_id: product.unit_id,
-          sku: product.sku,
-          barcode: product.barcode,
-          name: product.name,
-          description: product.description,
-          purchase_price: product.purchase_price,
-          selling_price: product.selling_price,
-          minimum_stock: product.minimum_stock,
-          image_url: imageUrl,
-          is_active: product.is_active,
-        }
+        imageUrl
       );
 
     return res.json({
