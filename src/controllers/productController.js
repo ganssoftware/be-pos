@@ -1,6 +1,6 @@
 const productModel = require("../models/productModel");
 const pool = require("../config/db");
-const { supabaseAdmin } = require("../config/supabase");
+const supabaseAdmin = require("../config/supabase");
 
 function parseNonNegativeNumber(value, fieldName) {
   const number = Number(value);
