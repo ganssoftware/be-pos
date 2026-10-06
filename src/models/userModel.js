@@ -6,11 +6,14 @@ async function findUserById(userId) {
       u.id,
       u.username,
       u.email,
+      u.password,
       u.full_name,
+      u.role_id,
+      r.name AS role_name,
       u.is_active,
+      u.profile_photo,
       u.created_at,
-      r.id AS role_id,
-      r.name AS role_name
+      u.updated_at
     FROM users u
     INNER JOIN roles r
       ON r.id = u.role_id
@@ -44,13 +47,18 @@ async function findUserByUsername(username) {
 async function findUserByEmail(email) {
   const query = `
     SELECT
-      id,
-      username,
-      email,
-      full_name,
-      is_active
-    FROM users
-    WHERE email = $1
+      u.id,
+      u.username,
+      u.email,
+      u.full_name,
+      u.role_id,
+      r.name AS role_name,
+      u.is_active,
+      u.profile_photo
+    FROM users u
+    INNER JOIN roles r
+      ON r.id = u.role_id
+    WHERE u.email = $1
     LIMIT 1
   `;
 
@@ -141,6 +149,7 @@ async function findOwners() {
       u.username,
       u.email,
       u.full_name,
+      u.profile_photo,
       u.is_active,
       u.created_at,
       r.id AS role_id,
@@ -164,6 +173,7 @@ async function findCashiersByOwnerId(ownerId) {
       u.username,
       u.email,
       u.full_name,
+      u.profile_photo,
       u.is_active,
       u.created_at,
       r.id AS role_id,
@@ -192,6 +202,7 @@ async function findAllUsers() {
       u.username,
       u.email,
       u.full_name,
+      u.profile_photo,
       u.is_active,
       u.created_at,
       r.id AS role_id,
@@ -231,6 +242,132 @@ async function setUserActive(userId, isActive) {
   return result.rows[0] || null;
 }
 
+async function updateUserProfile(
+  userId,
+  fullName,
+  email,
+  password = null
+) {
+  const query = `
+    UPDATE users
+    SET
+      full_name = $1,
+      email = $2,
+      password = COALESCE($3, password),
+      updated_at = NOW()
+    WHERE id = $4
+    RETURNING
+      id,
+      username,
+      email,
+      full_name,
+      role_id,
+      is_active,
+      profile_photo,
+      created_at,
+      updated_at
+  `;
+
+  const result = await pool.query(query, [
+    fullName,
+    email,
+    password,
+    userId,
+  ]);
+
+  return result.rows[0] || null;
+}
+
+async function updateManagedUser(
+  userId,
+  fullName,
+  email,
+  password = null
+) {
+  const query = `
+    UPDATE users
+    SET
+      full_name = $1,
+      email = $2,
+      password = COALESCE($3, password),
+      updated_at = NOW()
+    WHERE id = $4
+    RETURNING
+      id,
+      username,
+      email,
+      full_name,
+      role_id,
+      is_active,
+      profile_photo,
+      created_at,
+      updated_at
+  `;
+
+  const result = await pool.query(query, [
+    fullName,
+    email,
+    password,
+    userId,
+  ]);
+
+  return result.rows[0] || null;
+}
+
+async function ownerHasCashier(ownerId, cashierId) {
+  const query = `
+    SELECT 1
+    FROM store_users su
+    INNER JOIN stores s
+      ON s.id = su.store_id
+    INNER JOIN users u
+      ON u.id = su.user_id
+    INNER JOIN roles r
+      ON r.id = u.role_id
+    WHERE s.owner_id = $1
+      AND u.id = $2
+      AND r.name = 'cashier'
+      AND s.is_active = true
+    LIMIT 1
+  `;
+
+  const result = await pool.query(query, [
+    ownerId,
+    cashierId,
+  ]);
+
+  return result.rowCount > 0;
+}
+
+async function updateProfilePhoto(
+  userId,
+  profilePhoto
+) {
+  const query = `
+    UPDATE users
+    SET
+      profile_photo = $1,
+      updated_at = NOW()
+    WHERE id = $2
+    RETURNING
+      id,
+      username,
+      email,
+      full_name,
+      role_id,
+      is_active,
+      profile_photo,
+      updated_at
+  `;
+
+  const result = await pool.query(query, [
+    profilePhoto,
+    userId,
+  ]);
+
+  return result.rows[0] || null;
+}
+
 module.exports = {
   findUserById,
   findUserByUsername,
@@ -243,4 +380,8 @@ module.exports = {
   findCashiersByOwnerId,
   findAllUsers,
   setUserActive,
+  updateUserProfile,
+  updateManagedUser,
+  ownerHasCashier,
+  updateProfilePhoto,
 };

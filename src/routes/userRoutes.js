@@ -1,13 +1,23 @@
 const express = require("express");
-
 const router = express.Router();
 
 const authMiddleware = require("../middleware/authMiddleware");
 const roleMiddleware = require("../middleware/roleMiddleware");
-
+const upload = require("../middleware/uploadImage");
 const userController = require("../controllers/userController");
 
 router.use(authMiddleware);
+
+router.put(
+  "/me",
+  userController.updateMyProfile
+);
+
+router.post(
+  "/me/photo",
+  upload.single("image"),
+  userController.uploadMyProfilePhoto
+);
 
 router.post(
   "/owners",
@@ -19,12 +29,6 @@ router.get(
   "/owners",
   roleMiddleware("super-admin"),
   userController.getOwners
-);
-
-router.get(
-  "/",
-  roleMiddleware("super-admin"),
-  userController.getAllUsers
 );
 
 router.post(
@@ -39,10 +43,22 @@ router.get(
   userController.getMyCashiers
 );
 
+router.put(
+  "/:userId",
+  roleMiddleware("super-admin", "owner"),
+  userController.updateManagedUser
+);
+
 router.patch(
   "/:userId/status",
   roleMiddleware("super-admin", "owner"),
   userController.updateUserStatus
+);
+
+router.get(
+  "/",
+  roleMiddleware("super-admin"),
+  userController.getAllUsers
 );
 
 module.exports = router;

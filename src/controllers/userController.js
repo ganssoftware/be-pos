@@ -223,6 +223,153 @@ async function updateUserStatus(req, res, next) {
   }
 }
 
+async function updateMyProfile(
+  req,
+  res,
+  next
+) {
+  try {
+    const {
+      full_name,
+      email,
+      current_password,
+      new_password,
+    } = req.body;
+
+    if (!full_name || !full_name.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Nama lengkap wajib diisi",
+      });
+    }
+
+    if (!email || !email.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Email wajib diisi",
+      });
+    }
+
+    const gmailRegex =
+      /^[a-zA-Z0-9._%+-]+@gmail\.com$/;
+
+    if (!gmailRegex.test(email.trim())) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Email harus menggunakan @gmail.com",
+      });
+    }
+
+    const user =
+      await userService.updateMyProfile(
+        req.user.user_id,
+        {
+          full_name: full_name.trim(),
+          email: email.trim(),
+          current_password,
+          new_password,
+        }
+      );
+
+    return res.status(200).json({
+      success: true,
+      message: "Profil berhasil diperbarui",
+      data: user,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function uploadMyProfilePhoto(
+  req,
+  res,
+  next
+) {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Foto profil wajib dipilih",
+      });
+    }
+
+    const user =
+      await userService.uploadProfilePhoto(
+        req.user.user_id,
+        req.file
+      );
+
+    return res.status(200).json({
+      success: true,
+      message:
+        "Foto profil berhasil diperbarui",
+      data: user,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function updateManagedUser(
+  req,
+  res,
+  next
+) {
+  try {
+    const {
+      full_name,
+      email,
+      new_password,
+    } = req.body;
+
+    if (!full_name || !full_name.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Nama lengkap wajib diisi",
+      });
+    }
+
+    if (!email || !email.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Email wajib diisi",
+      });
+    }
+
+    const gmailRegex =
+      /^[a-zA-Z0-9._%+-]+@gmail\.com$/;
+
+    if (!gmailRegex.test(email.trim())) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Email harus menggunakan @gmail.com",
+      });
+    }
+
+    const user =
+      await userService.updateManagedUser(
+        req.user.user_id,
+        req.params.userId,
+        {
+          full_name: full_name.trim(),
+          email: email.trim(),
+          new_password,
+        }
+      );
+
+    return res.status(200).json({
+      success: true,
+      message: "User berhasil diperbarui",
+      data: user,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   createOwner,
   createCashier,
@@ -230,4 +377,6 @@ module.exports = {
   getMyCashiers,
   getAllUsers,
   updateUserStatus,
+  updateMyProfile,
+  uploadMyProfilePhoto,
 };

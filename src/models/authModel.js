@@ -9,7 +9,7 @@ async function findUserByUsername(username) {
       u.password,
       u.full_name,
       u.is_active,
-
+      u.profile_photo,
       r.id AS role_id,
       r.name AS role_name
 
@@ -36,7 +36,7 @@ async function findUserById(id) {
       u.email,
       u.full_name,
       u.is_active,
-
+      u.profile_photo,
       r.id AS role_id,
       r.name AS role_name
 

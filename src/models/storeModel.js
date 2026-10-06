@@ -8,6 +8,7 @@ async function findStoresByUserId(userId) {
       s.code,
       s.address,
       s.phone,
+      s.image_url,
       s.is_active
     FROM stores s
     INNER JOIN store_users su
@@ -17,7 +18,10 @@ async function findStoresByUserId(userId) {
     ORDER BY s.name ASC
   `;
 
-  const result = await pool.query(query, [userId]);
+  const result = await pool.query(
+    query,
+    [userId]
+  );
 
   return result.rows;
 }

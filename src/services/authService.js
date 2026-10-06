@@ -38,6 +38,7 @@ async function login(username, password) {
       username: user.username,
       email: user.email,
       full_name: user.full_name,
+      profile_photo: user.profile_photo,
       role: {
         id: user.role_id,
         name: user.role_name,
@@ -63,7 +64,9 @@ async function me(userId) {
     user: {
       id: user.id,
       username: user.username,
+      email: user.email,
       full_name: user.full_name,
+      profile_photo: user.profile_photo,
       role: {
         id: user.role_id,
         name: user.role_name,
