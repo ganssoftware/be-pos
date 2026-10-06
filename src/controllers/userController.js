@@ -379,4 +379,5 @@ module.exports = {
   updateUserStatus,
   updateMyProfile,
   uploadMyProfilePhoto,
+  updateManagedUser,
 };
