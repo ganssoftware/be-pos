@@ -4,6 +4,11 @@ async function login(req, res, next) {
   try {
     const { username, password } = req.body;
 
+    console.log("=== LOGIN DEBUG ===");
+    console.log("username:", username);
+    console.log("password exists:", !!password);
+    console.log("===================");
+
     if (!username || !password) {
       return res.status(400).json({
         success: false,
