@@ -14,6 +14,7 @@ const productRoutes = require("./routes/productRoutes");
 const supplierRoutes = require("./routes/supplierRoutes");
 const customerRoutes = require("./routes/customerRoutes");
 const shiftRoutes = require("./routes/shiftRoutes");
+const shiftScheduleRoutes = require("./routes/shiftScheduleRoutes");
 const transactionRoutes = require("./routes/transactionRoutes");
 const userRoutes = require("./routes/userRoutes");
 const errorMiddleware = require("./middleware/errorMiddleware");
@@ -70,6 +71,7 @@ app.use("/api/inventory", inventoryRoutes);
 app.use("/api/suppliers", supplierRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/shifts", shiftRoutes);
+app.use("/api/shift-schedules", shiftScheduleRoutes);
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/users", userRoutes);
 

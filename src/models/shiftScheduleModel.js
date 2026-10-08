@@ -1,0 +1,199 @@
+const pool = require("../config/db");
+
+async function findAll(storeId, { date = "", userId = "" } = {}) {
+  const conditions = ["ss.store_id = $1"];
+  const values = [storeId];
+
+  if (date) {
+    values.push(date);
+    conditions.push(`ss.shift_date = $${values.length}`);
+  }
+
+  if (userId) {
+    values.push(userId);
+    conditions.push(`ss.user_id = $${values.length}`);
+  }
+
+  const whereClause = conditions.join(" AND ");
+
+  const query = `
+    SELECT
+      ss.id,
+      ss.store_id,
+      ss.user_id,
+      ss.shift_name,
+      ss.shift_date,
+      ss.start_time,
+      ss.end_time,
+      ss.status,
+      ss.notes,
+      ss.created_at,
+      ss.updated_at,
+
+      u.username,
+      u.full_name
+
+    FROM shift_schedules ss
+
+    INNER JOIN users u
+      ON u.id = ss.user_id
+
+    WHERE ${whereClause}
+
+    ORDER BY
+      ss.shift_date ASC,
+      ss.start_time ASC,
+      u.full_name ASC
+  `;
+
+  const result = await pool.query(query, values);
+
+  return result.rows;
+}
+
+async function findById(id, storeId) {
+  const query = `
+    SELECT
+      ss.id,
+      ss.store_id,
+      ss.user_id,
+      ss.shift_name,
+      ss.shift_date,
+      ss.start_time,
+      ss.end_time,
+      ss.status,
+      ss.notes,
+      ss.created_at,
+      ss.updated_at,
+
+      u.username,
+      u.full_name
+
+    FROM shift_schedules ss
+
+    INNER JOIN users u
+      ON u.id = ss.user_id
+
+    WHERE ss.id = $1
+      AND ss.store_id = $2
+
+    LIMIT 1
+  `;
+
+  const result = await pool.query(query, [id, storeId]);
+
+  return result.rows[0] || null;
+}
+
+async function create({
+  storeId,
+  userId,
+  shiftName,
+  shiftDate,
+  startTime,
+  endTime,
+  notes,
+}) {
+  const query = `
+    INSERT INTO shift_schedules (
+      store_id,
+      user_id,
+      shift_name,
+      shift_date,
+      start_time,
+      end_time,
+      notes,
+      status
+    )
+    VALUES (
+      $1,
+      $2,
+      $3,
+      $4,
+      $5,
+      $6,
+      $7,
+      'SCHEDULED'
+    )
+    RETURNING *
+  `;
+
+  const result = await pool.query(query, [
+    storeId,
+    userId,
+    shiftName,
+    shiftDate,
+    startTime,
+    endTime,
+    notes || null,
+  ]);
+
+  return result.rows[0];
+}
+
+async function update(
+  id,
+  storeId,
+  {
+    userId,
+    shiftName,
+    shiftDate,
+    startTime,
+    endTime,
+    notes,
+    status,
+  }
+) {
+  const query = `
+    UPDATE shift_schedules
+    SET
+      user_id = $1,
+      shift_name = $2,
+      shift_date = $3,
+      start_time = $4,
+      end_time = $5,
+      notes = $6,
+      status = $7,
+      updated_at = NOW()
+
+    WHERE id = $8
+      AND store_id = $9
+
+    RETURNING *
+  `;
+
+  const result = await pool.query(query, [
+    userId,
+    shiftName,
+    shiftDate,
+    startTime,
+    endTime,
+    notes || null,
+    status || "SCHEDULED",
+    id,
+    storeId,
+  ]);
+
+  return result.rows[0] || null;
+}
+
+async function remove(id, storeId) {
+  const query = `
+    DELETE FROM shift_schedules
+    WHERE id = $1
+      AND store_id = $2
+    RETURNING id
+  `;
+
+  const result = await pool.query(query, [id, storeId]);
+
+  return result.rows[0] || null;
+}
+
+module.exports = {
+  findAll,
+  findById,
+  create,
+  update,
+  remove,
+};
