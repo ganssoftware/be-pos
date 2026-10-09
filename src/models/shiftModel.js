@@ -182,32 +182,54 @@ async function create({
   return result.rows[0];
 }
 
-async function close(
-  id,
-  storeId,
-  closingCash
-) {
+async function close(id, storeId, closingCash) {
   const query = `
-    UPDATE shifts
-    SET
-      closing_cash = $1,
-      difference = $1 - expected_cash,
-      status = 'CLOSED',
-      closed_at = NOW()
-    WHERE id = $2
-      AND store_id = $3
-      AND status = 'OPEN'
-    RETURNING
-      id,
-      store_id,
-      user_id,
-      opening_cash,
-      expected_cash,
-      closing_cash,
-      difference,
-      status,
-      opened_at,
-      closed_at
+    WITH closed AS (
+      UPDATE shifts
+      SET
+        closing_cash = $1,
+        difference = $1 - expected_cash,
+        status = 'CLOSED',
+        closed_at = NOW()
+      WHERE id = $2
+        AND store_id = $3
+        AND status = 'OPEN'
+      RETURNING
+        id,
+        store_id,
+        user_id,
+        schedule_id,
+        opening_cash,
+        expected_cash,
+        closing_cash,
+        difference,
+        status,
+        opened_at,
+        closed_at
+    ),
+    completed AS (
+      UPDATE shift_schedules ss
+      SET
+        status = 'COMPLETED',
+        updated_at = NOW()
+      FROM closed c
+      WHERE ss.id = c.schedule_id
+        AND ss.store_id = c.store_id
+      RETURNING ss.id
+    )
+    SELECT
+      c.id,
+      c.store_id,
+      c.user_id,
+      c.schedule_id,
+      c.opening_cash,
+      c.expected_cash,
+      c.closing_cash,
+      c.difference,
+      c.status,
+      c.opened_at,
+      c.closed_at
+    FROM closed c
   `;
 
   const result = await pool.query(query, [
@@ -322,6 +344,110 @@ async function decreaseExpectedCash(client, shiftId, amount) {
   return result.rows[0] || null;
 }
 
+async function openFromSchedule({
+  scheduleId,
+  storeId,
+  userId,
+}) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const scheduleResult = await client.query(
+      `
+        SELECT id, opening_cash, status
+        FROM shift_schedules
+        WHERE id = $1
+          AND store_id = $2
+          AND user_id = $3
+        FOR UPDATE
+      `,
+      [scheduleId, storeId, userId]
+    );
+
+    const schedule = scheduleResult.rows[0];
+
+    if (!schedule) {
+      const error = new Error(
+        "Jadwal shift tidak ditemukan untuk akun Anda"
+      );
+      error.code = "SCHEDULE_NOT_FOUND";
+      throw error;
+    }
+
+    if (schedule.status !== "SCHEDULED") {
+      const error = new Error(
+        "Jadwal shift sudah digunakan atau tidak aktif"
+      );
+      error.code = "SCHEDULE_NOT_AVAILABLE";
+      throw error;
+    }
+
+    const existingResult = await client.query(
+      `
+        SELECT id
+        FROM shifts
+        WHERE user_id = $1
+          AND store_id = $2
+          AND status = 'OPEN'
+        LIMIT 1
+        FOR UPDATE
+      `,
+      [userId, storeId]
+    );
+
+    if (existingResult.rows.length > 0) {
+      const error = new Error(
+        "Anda masih memiliki shift yang sedang terbuka"
+      );
+      error.code = "SHIFT_ALREADY_OPEN";
+      throw error;
+    }
+
+    const shiftResult = await client.query(
+      `
+        INSERT INTO shifts (
+          store_id,
+          user_id,
+          schedule_id,
+          opening_cash,
+          expected_cash,
+          status,
+          opened_at
+        )
+        VALUES ($1, $2, $3, $4, $4, 'OPEN', NOW())
+        RETURNING *
+      `,
+      [
+        storeId,
+        userId,
+        scheduleId,
+        schedule.opening_cash,
+      ]
+    );
+
+    await client.query(
+      `
+        UPDATE shift_schedules
+        SET status = 'IN_PROGRESS',
+            updated_at = NOW()
+        WHERE id = $1
+      `,
+      [scheduleId]
+    );
+
+    await client.query("COMMIT");
+
+    return shiftResult.rows[0];
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   findCurrentByUserId,
   findById,
@@ -332,4 +458,5 @@ module.exports = {
   increaseExpectedCash,
   findByIdForUpdate,
   decreaseExpectedCash,
+  openFromSchedule,
 };

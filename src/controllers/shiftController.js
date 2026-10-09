@@ -12,57 +12,51 @@ function parseNonNegativeNumber(value) {
 
 async function openShift(req, res, next) {
   try {
-    const openingCash = parseNonNegativeNumber(
-      req.body.opening_cash
-    );
+    const { schedule_id: scheduleId } = req.body;
 
-    if (openingCash === null) {
+    if (
+      typeof scheduleId !== "string" ||
+      !scheduleId.trim()
+    ) {
       return res.status(400).json({
         success: false,
-        message:
-          "Opening cash harus berupa angka >= 0",
+        message: "schedule_id wajib diisi",
       });
     }
 
-    const existingShift =
-      await shiftModel.findCurrentByUserId(
-        req.user.user_id,
-        req.storeId
-      );
+    const shift = await shiftModel.openFromSchedule({
+      scheduleId: scheduleId.trim(),
+      storeId: req.storeId,
+      userId: req.user.user_id,
+    });
 
-    if (existingShift) {
+    return res.status(201).json({
+      success: true,
+      message: "Shift berhasil dimulai",
+      data: shift,
+    });
+  } catch (error) {
+    if (error.code === "SCHEDULE_NOT_FOUND") {
+      return res.status(404).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    if (
+      error.code === "SCHEDULE_NOT_AVAILABLE" ||
+      error.code === "SHIFT_ALREADY_OPEN" ||
+      error.code === "23505"
+    ) {
       return res.status(409).json({
         success: false,
         message:
-          "Anda masih memiliki shift yang sedang terbuka",
-        data: existingShift,
+          error.code === "23505"
+            ? "Shift sudah dibuka atau jadwal sudah digunakan"
+            : error.message,
       });
     }
 
-    try {
-      const shift = await shiftModel.create({
-        storeId: req.storeId,
-        userId: req.user.user_id,
-        openingCash,
-      });
-
-      return res.status(201).json({
-        success: true,
-        message: "Shift berhasil dibuka",
-        data: shift,
-      });
-    } catch (error) {
-      if (error.code === "23505") {
-        return res.status(409).json({
-          success: false,
-          message:
-            "Anda masih memiliki shift yang sedang terbuka",
-        });
-      }
-
-      throw error;
-    }
-  } catch (error) {
     next(error);
   }
 }

@@ -1,22 +1,22 @@
 const pool = require("../config/db");
 
 async function findAll(storeId, { date = "", userId = "" } = {}) {
-  const conditions = ["ss.store_id = $1"];
-  const values = [storeId];
+    const conditions = ["ss.store_id = $1"];
+    const values = [storeId];
 
-  if (date) {
-    values.push(date);
-    conditions.push(`ss.shift_date = $${values.length}`);
-  }
+    if (date) {
+        values.push(date);
+        conditions.push(`ss.shift_date = $${values.length}`);
+    }
 
-  if (userId) {
-    values.push(userId);
-    conditions.push(`ss.user_id = $${values.length}`);
-  }
+    if (userId) {
+        values.push(userId);
+        conditions.push(`ss.user_id = $${values.length}`);
+    }
 
-  const whereClause = conditions.join(" AND ");
+    const whereClause = conditions.join(" AND ");
 
-  const query = `
+    const query = `
     SELECT
       ss.id,
       ss.store_id,
@@ -27,6 +27,7 @@ async function findAll(storeId, { date = "", userId = "" } = {}) {
       ss.end_time,
       ss.status,
       ss.notes,
+      ss.opening_cash,
       ss.created_at,
       ss.updated_at,
 
@@ -46,13 +47,13 @@ async function findAll(storeId, { date = "", userId = "" } = {}) {
       u.full_name ASC
   `;
 
-  const result = await pool.query(query, values);
+    const result = await pool.query(query, values);
 
-  return result.rows;
+    return result.rows;
 }
 
 async function findById(id, storeId) {
-  const query = `
+    const query = `
     SELECT
       ss.id,
       ss.store_id,
@@ -63,6 +64,7 @@ async function findById(id, storeId) {
       ss.end_time,
       ss.status,
       ss.notes,
+      ss.opening_cash,
       ss.created_at,
       ss.updated_at,
 
@@ -80,21 +82,22 @@ async function findById(id, storeId) {
     LIMIT 1
   `;
 
-  const result = await pool.query(query, [id, storeId]);
+    const result = await pool.query(query, [id, storeId]);
 
-  return result.rows[0] || null;
+    return result.rows[0] || null;
 }
 
 async function create({
-  storeId,
-  userId,
-  shiftName,
-  shiftDate,
-  startTime,
-  endTime,
-  notes,
+    storeId,
+    userId,
+    shiftName,
+    shiftDate,
+    startTime,
+    endTime,
+    notes,
+    openingCash = 0,
 }) {
-  const query = `
+    const query = `
     INSERT INTO shift_schedules (
       store_id,
       user_id,
@@ -103,97 +106,91 @@ async function create({
       start_time,
       end_time,
       notes,
+      opening_cash,
       status
     )
-    VALUES (
-      $1,
-      $2,
-      $3,
-      $4,
-      $5,
-      $6,
-      $7,
-      'SCHEDULED'
-    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'SCHEDULED')
     RETURNING *
   `;
 
-  const result = await pool.query(query, [
-    storeId,
-    userId,
-    shiftName,
-    shiftDate,
-    startTime,
-    endTime,
-    notes || null,
-  ]);
+    const result = await pool.query(query, [
+        storeId,
+        userId,
+        shiftName,
+        shiftDate,
+        startTime,
+        endTime,
+        notes || null,
+        openingCash,
+    ]);
 
-  return result.rows[0];
+    return result.rows[0];
 }
 
 async function update(
-  id,
-  storeId,
-  {
-    userId,
-    shiftName,
-    shiftDate,
-    startTime,
-    endTime,
-    notes,
-    status,
-  }
-) {
-  const query = `
-    UPDATE shift_schedules
-    SET
-      user_id = $1,
-      shift_name = $2,
-      shift_date = $3,
-      start_time = $4,
-      end_time = $5,
-      notes = $6,
-      status = $7,
-      updated_at = NOW()
-
-    WHERE id = $8
-      AND store_id = $9
-
-    RETURNING *
-  `;
-
-  const result = await pool.query(query, [
-    userId,
-    shiftName,
-    shiftDate,
-    startTime,
-    endTime,
-    notes || null,
-    status || "SCHEDULED",
     id,
     storeId,
-  ]);
+    {
+        userId,
+        shiftName,
+        shiftDate,
+        startTime,
+        endTime,
+        notes,
+        openingCash = 0,
+        status,
+    }
+) {
+    const query = `
+    UPDATE shift_schedules
+        SET
+        user_id = $1,
+        shift_name = $2,
+        shift_date = $3,
+        start_time = $4,
+        end_time = $5,
+        notes = $6,
+        opening_cash = $7,
+        status = $8,
+        updated_at = NOW()
+        WHERE id = $9
+        AND store_id = $10
+        RETURNING *
+    `;
 
-  return result.rows[0] || null;
+    const result = await pool.query(query, [
+        userId,
+        shiftName,
+        shiftDate,
+        startTime,
+        endTime,
+        notes || null,
+        openingCash,
+        status || "SCHEDULED",
+        id,
+        storeId,
+    ]);
+
+    return result.rows[0] || null;
 }
 
 async function remove(id, storeId) {
-  const query = `
+    const query = `
     DELETE FROM shift_schedules
     WHERE id = $1
       AND store_id = $2
     RETURNING id
   `;
 
-  const result = await pool.query(query, [id, storeId]);
+    const result = await pool.query(query, [id, storeId]);
 
-  return result.rows[0] || null;
+    return result.rows[0] || null;
 }
 
 module.exports = {
-  findAll,
-  findById,
-  create,
-  update,
-  remove,
+    findAll,
+    findById,
+    create,
+    update,
+    remove,
 };
