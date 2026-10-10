@@ -10,14 +10,11 @@ function parseNonNegativeNumber(value) {
   return number;
 }
 
-async function openShift(req, res, next) {
+async function openShift(req, res) {
   try {
     const { schedule_id: scheduleId } = req.body;
 
-    if (
-      typeof scheduleId !== "string" ||
-      !scheduleId.trim()
-    ) {
+    if (!scheduleId) {
       return res.status(400).json({
         success: false,
         message: "schedule_id wajib diisi",
@@ -25,39 +22,28 @@ async function openShift(req, res, next) {
     }
 
     const shift = await shiftModel.openFromSchedule({
-      scheduleId: scheduleId.trim(),
+      scheduleId,
       storeId: req.storeId,
       userId: req.user.user_id,
     });
 
     return res.status(201).json({
       success: true,
-      message: "Shift berhasil dimulai",
+      message: "Shift berhasil dibuka",
       data: shift,
     });
   } catch (error) {
-    if (error.code === "SCHEDULE_NOT_FOUND") {
-      return res.status(404).json({
-        success: false,
-        message: error.message,
-      });
-    }
+    console.error("Open shift error:", error);
 
-    if (
-      error.code === "SCHEDULE_NOT_AVAILABLE" ||
-      error.code === "SHIFT_ALREADY_OPEN" ||
-      error.code === "23505"
-    ) {
-      return res.status(409).json({
-        success: false,
-        message:
-          error.code === "23505"
-            ? "Shift sudah dibuka atau jadwal sudah digunakan"
-            : error.message,
-      });
-    }
+    const statusCode = error.statusCode || 500;
 
-    next(error);
+    return res.status(statusCode).json({
+      success: false,
+      message:
+        statusCode === 500
+          ? "Gagal membuka shift"
+          : error.message,
+    });
   }
 }
 
@@ -110,12 +96,18 @@ async function getShifts(req, res, next) {
       });
     }
 
+    const userId =
+      req.user.role === "owner"
+        ? ""
+        : req.user.user_id;
+
     const result = await shiftModel.findAll(
       req.storeId,
       {
         page,
         limit,
         status,
+        userId,
       }
     );
 
@@ -129,39 +121,32 @@ async function getShifts(req, res, next) {
   }
 }
 
-async function closeShift(req, res, next) {
+async function closeShift(req, res) {
   try {
-    const { id } = req.params;
+    const { closing_cash: closingCash } = req.body;
 
-    const closingCash = parseNonNegativeNumber(
-      req.body.closing_cash
-    );
-
-    if (closingCash === null) {
+    if (
+      closingCash === undefined ||
+      closingCash === null ||
+      closingCash === "" ||
+      !Number.isFinite(Number(closingCash)) ||
+      Number(closingCash) < 0
+    ) {
       return res.status(400).json({
         success: false,
-        message:
-          "Closing cash harus berupa angka >= 0",
+        message: "closing_cash harus berupa angka dan tidak boleh negatif",
       });
     }
 
-    const shift =
-      await shiftModel.findById(
-        id,
-        req.storeId
-      );
+    const shift = await shiftModel.findById(
+      req.params.id,
+      req.storeId
+    );
 
     if (!shift) {
       return res.status(404).json({
         success: false,
         message: "Shift tidak ditemukan",
-      });
-    }
-
-    if (shift.status !== "OPEN") {
-      return res.status(409).json({
-        success: false,
-        message: "Shift sudah ditutup",
       });
     }
 
@@ -171,23 +156,20 @@ async function closeShift(req, res, next) {
     ) {
       return res.status(403).json({
         success: false,
-        message:
-          "Anda tidak dapat menutup shift kasir lain",
+        message: "Anda tidak memiliki akses ke shift ini",
       });
     }
 
-    const closedShift =
-      await shiftModel.close(
-        id,
-        req.storeId,
-        closingCash
-      );
+    const closedShift = await shiftModel.close(
+      req.params.id,
+      req.storeId,
+      Number(closingCash)
+    );
 
     if (!closedShift) {
       return res.status(409).json({
         success: false,
-        message:
-          "Shift gagal ditutup atau sudah ditutup",
+        message: "Shift sudah ditutup atau tidak dapat ditutup",
       });
     }
 
@@ -197,7 +179,12 @@ async function closeShift(req, res, next) {
       data: closedShift,
     });
   } catch (error) {
-    next(error);
+    console.error("Close shift error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Gagal menutup shift",
+    });
   }
 }
 

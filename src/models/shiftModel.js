@@ -60,29 +60,27 @@ async function findById(id, storeId) {
   return result.rows[0] || null;
 }
 
+
 async function findAll(
   storeId,
-  { page = 1, limit = 20, status = "" }
+  { page = 1, limit = 20, status = "", userId = "" } = {}
 ) {
   const offset = (page - 1) * limit;
 
   const conditions = ["s.store_id = $1"];
   const values = [storeId];
 
+  if (userId) {
+    values.push(userId);
+    conditions.push(`s.user_id = $${values.length}`);
+  }
+
   if (status) {
     values.push(status);
-    conditions.push(
-      `s.status = $${values.length}`
-    );
+    conditions.push(`s.status = $${values.length}`);
   }
 
   const whereClause = conditions.join(" AND ");
-
-  values.push(limit);
-  const limitParam = `$${values.length}`;
-
-  values.push(offset);
-  const offsetParam = `$${values.length}`;
 
   const countQuery = `
     SELECT COUNT(*) AS total
@@ -90,11 +88,23 @@ async function findAll(
     WHERE ${whereClause}
   `;
 
+  const countResult = await pool.query(
+    countQuery,
+    values
+  );
+
+  const total = Number(countResult.rows[0].total);
+
+  const dataValues = [...values, limit, offset];
+  const limitParam = `$${values.length + 1}`;
+  const offsetParam = `$${values.length + 2}`;
+
   const dataQuery = `
     SELECT
       s.id,
       s.store_id,
       s.user_id,
+      s.schedule_id,
       s.opening_cash,
       s.expected_cash,
       s.closing_cash,
@@ -105,26 +115,16 @@ async function findAll(
       u.username,
       u.full_name
     FROM shifts s
-    INNER JOIN users u
-      ON u.id = s.user_id
+    INNER JOIN users u ON u.id = s.user_id
     WHERE ${whereClause}
     ORDER BY s.opened_at DESC
     LIMIT ${limitParam}
     OFFSET ${offsetParam}
   `;
 
-  const countResult = await pool.query(
-    countQuery,
-    values.slice(0, values.length - 2)
-  );
-
   const dataResult = await pool.query(
     dataQuery,
-    values
-  );
-
-  const total = Number(
-    countResult.rows[0].total
+    dataValues
   );
 
   return {
@@ -182,54 +182,30 @@ async function create({
   return result.rows[0];
 }
 
+
 async function close(id, storeId, closingCash) {
   const query = `
-    WITH closed AS (
-      UPDATE shifts
-      SET
-        closing_cash = $1,
-        difference = $1 - expected_cash,
-        status = 'CLOSED',
-        closed_at = NOW()
-      WHERE id = $2
-        AND store_id = $3
-        AND status = 'OPEN'
-      RETURNING
-        id,
-        store_id,
-        user_id,
-        schedule_id,
-        opening_cash,
-        expected_cash,
-        closing_cash,
-        difference,
-        status,
-        opened_at,
-        closed_at
-    ),
-    completed AS (
-      UPDATE shift_schedules ss
-      SET
-        status = 'COMPLETED',
-        updated_at = NOW()
-      FROM closed c
-      WHERE ss.id = c.schedule_id
-        AND ss.store_id = c.store_id
-      RETURNING ss.id
-    )
-    SELECT
-      c.id,
-      c.store_id,
-      c.user_id,
-      c.schedule_id,
-      c.opening_cash,
-      c.expected_cash,
-      c.closing_cash,
-      c.difference,
-      c.status,
-      c.opened_at,
-      c.closed_at
-    FROM closed c
+    UPDATE shifts
+    SET
+      closing_cash = $1,
+      difference = $1 - expected_cash,
+      status = 'CLOSED',
+      closed_at = NOW()
+    WHERE id = $2
+      AND store_id = $3
+      AND status = 'OPEN'
+    RETURNING
+      id,
+      store_id,
+      user_id,
+      schedule_id,
+      opening_cash,
+      expected_cash,
+      closing_cash,
+      difference,
+      status,
+      opened_at,
+      closed_at
   `;
 
   const result = await pool.query(query, [
@@ -344,24 +320,23 @@ async function decreaseExpectedCash(client, shiftId, amount) {
   return result.rows[0] || null;
 }
 
-async function openFromSchedule({
-  scheduleId,
-  storeId,
-  userId,
-}) {
+
+
+async function openFromSchedule({ scheduleId, storeId, userId }) {
   const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
+    // Pastikan jadwal memang milik kasir dan toko yang sesuai.
     const scheduleResult = await client.query(
       `
-        SELECT id, opening_cash, status
-        FROM shift_schedules
-        WHERE id = $1
-          AND store_id = $2
-          AND user_id = $3
-        FOR UPDATE
+      SELECT id, store_id, user_id, opening_cash, status
+      FROM shift_schedules
+      WHERE id = $1
+        AND store_id = $2
+        AND user_id = $3
+      FOR UPDATE
       `,
       [scheduleId, storeId, userId]
     );
@@ -370,71 +345,63 @@ async function openFromSchedule({
 
     if (!schedule) {
       const error = new Error(
-        "Jadwal shift tidak ditemukan untuk akun Anda"
+        "Jadwal shift tidak ditemukan atau bukan milik Anda"
       );
-      error.code = "SCHEDULE_NOT_FOUND";
+      error.statusCode = 404;
       throw error;
     }
 
     if (schedule.status !== "SCHEDULED") {
       const error = new Error(
-        "Jadwal shift sudah digunakan atau tidak aktif"
+        "Jadwal shift tidak aktif atau sudah dibatalkan"
       );
-      error.code = "SCHEDULE_NOT_AVAILABLE";
+      error.statusCode = 400;
       throw error;
     }
 
-    const existingResult = await client.query(
+    // Satu kasir hanya boleh memiliki satu shift OPEN per toko.
+    const openShiftResult = await client.query(
       `
-        SELECT id
-        FROM shifts
-        WHERE user_id = $1
-          AND store_id = $2
-          AND status = 'OPEN'
-        LIMIT 1
-        FOR UPDATE
+      SELECT id
+      FROM shifts
+      WHERE store_id = $1
+        AND user_id = $2
+        AND status = 'OPEN'
+      LIMIT 1
       `,
-      [userId, storeId]
+      [storeId, userId]
     );
 
-    if (existingResult.rows.length > 0) {
+    if (openShiftResult.rows.length > 0) {
       const error = new Error(
-        "Anda masih memiliki shift yang sedang terbuka"
+        "Anda masih memiliki shift yang belum ditutup"
       );
-      error.code = "SHIFT_ALREADY_OPEN";
+      error.statusCode = 409;
       throw error;
     }
 
+    // Buat catatan operasional baru.
+    // Jadwal tetap SCHEDULED agar bisa digunakan kembali pada hari berikutnya.
     const shiftResult = await client.query(
       `
-        INSERT INTO shifts (
-          store_id,
-          user_id,
-          schedule_id,
-          opening_cash,
-          expected_cash,
-          status,
-          opened_at
-        )
-        VALUES ($1, $2, $3, $4, $4, 'OPEN', NOW())
-        RETURNING *
+      INSERT INTO shifts (
+        store_id,
+        user_id,
+        schedule_id,
+        opening_cash,
+        expected_cash,
+        status,
+        opened_at
+      )
+      VALUES ($1, $2, $3, $4, $4, 'OPEN', NOW())
+      RETURNING *
       `,
       [
         storeId,
         userId,
-        scheduleId,
+        schedule.id,
         schedule.opening_cash,
       ]
-    );
-
-    await client.query(
-      `
-        UPDATE shift_schedules
-        SET status = 'IN_PROGRESS',
-            updated_at = NOW()
-        WHERE id = $1
-      `,
-      [scheduleId]
     );
 
     await client.query("COMMIT");

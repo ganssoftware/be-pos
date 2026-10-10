@@ -1,29 +1,43 @@
+
 const express = require("express");
 
 const router = express.Router();
 
 const controller = require("../controllers/shiftScheduleController");
-
-// Sesuaikan middleware dengan route shift yang sekarang.
 const authMiddleware = require("../middleware/authMiddleware");
 const storeMiddleware = require("../middleware/storeMiddleware");
+const roleMiddleware = require("../middleware/roleMiddleware");
 
 router.use(authMiddleware);
 router.use(storeMiddleware);
 
-// GET semua jadwal shift
-router.get("/", controller.getSchedules);
+// Owner dapat mengelola jadwal.
+router.get(
+  "/",
+  controller.getSchedules
+);
 
-// GET detail jadwal
-router.get("/:id", controller.getScheduleById);
+router.get(
+  "/:id",
+  controller.getScheduleById
+);
 
-// OWNER membuat jadwal
-router.post("/", controller.createSchedule);
+router.post(
+  "/",
+  roleMiddleware("owner"),
+  controller.createSchedule
+);
 
-// OWNER mengubah jadwal
-router.put("/:id", controller.updateSchedule);
+router.put(
+  "/:id",
+  roleMiddleware("owner"),
+  controller.updateSchedule
+);
 
-// OWNER menghapus jadwal
-router.delete("/:id", controller.deleteSchedule);
+router.delete(
+  "/:id",
+  roleMiddleware("owner"),
+  controller.deleteSchedule
+);
 
 module.exports = router;
