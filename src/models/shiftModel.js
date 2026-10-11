@@ -60,7 +60,6 @@ async function findById(id, storeId) {
   return result.rows[0] || null;
 }
 
-
 async function findAll(
   storeId,
   { page = 1, limit = 20, status = "", userId = "" } = {}
@@ -181,7 +180,6 @@ async function create({
 
   return result.rows[0];
 }
-
 
 async function close(id, storeId, closingCash) {
   const query = `
@@ -321,17 +319,27 @@ async function decreaseExpectedCash(client, shiftId, amount) {
 }
 
 
-
 async function openFromSchedule({ scheduleId, storeId, userId }) {
   const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    // Pastikan jadwal memang milik kasir dan toko yang sesuai.
+    // Ambil jadwal dan periksa apakah waktu mulai sudah tiba.
+    // Zona waktu operasional: Asia/Jakarta.
     const scheduleResult = await client.query(
       `
-      SELECT id, store_id, user_id, opening_cash, status
+      SELECT
+        id,
+        store_id,
+        user_id,
+        opening_cash,
+        status,
+        start_time,
+        (
+          (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::time
+          < start_time
+        ) AS is_before_start
       FROM shift_schedules
       WHERE id = $1
         AND store_id = $2
@@ -359,6 +367,17 @@ async function openFromSchedule({ scheduleId, storeId, userId }) {
       throw error;
     }
 
+    // Tolak pembukaan shift jika belum mencapai jam mulai.
+    if (schedule.is_before_start) {
+      const startTime = String(schedule.start_time).slice(0, 5);
+
+      const error = new Error(
+        `Shift belum dapat dimulai. Jadwal mulai pukul ${startTime}.`
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+
     // Satu kasir hanya boleh memiliki satu shift OPEN per toko.
     const openShiftResult = await client.query(
       `
@@ -381,7 +400,7 @@ async function openFromSchedule({ scheduleId, storeId, userId }) {
     }
 
     // Buat catatan operasional baru.
-    // Jadwal tetap SCHEDULED agar bisa digunakan kembali pada hari berikutnya.
+    // Jadwal rutin tetap SCHEDULED untuk digunakan kembali.
     const shiftResult = await client.query(
       `
       INSERT INTO shifts (
