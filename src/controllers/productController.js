@@ -236,6 +236,22 @@ async function getProductByBarcode(req, res, next) {
   }
 }
 
+async function getNextSku(req, res, next) {
+  try {
+    const sku = await productModel.getNextSku(req.storeId);
+
+    return res.json({
+      success: true,
+      message: "SKU berikutnya berhasil dibuat",
+      data: {
+        sku,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function createProduct(req, res, next) {
   try {
     const data = validateProductData(req.body);
@@ -490,6 +506,7 @@ module.exports = {
   getProducts,
   getProductById,
   getProductByBarcode,
+  getNextSku,
   createProduct,
   uploadProductImage,
   updateProduct,

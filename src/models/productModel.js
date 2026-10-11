@@ -199,6 +199,27 @@ async function findByBarcode(barcode, storeId) {
   return result.rows[0] || null;
 }
 
+async function getNextSku(storeId) {
+  const query = `
+    SELECT
+      COALESCE(
+        MAX(
+          SUBSTRING(sku FROM '^PRD-([0-9]+)$')::BIGINT
+        ),
+        0
+      ) + 1 AS next_number
+    FROM products
+    WHERE store_id = $1
+      AND sku ~ '^PRD-[0-9]+$'
+  `;
+
+  const result = await pool.query(query, [storeId]);
+
+  const nextNumber = Number(result.rows[0].next_number);
+
+  return `PRD-${String(nextNumber).padStart(3, "0")}`;
+}
+
 async function create(data) {
   const query = `
     INSERT INTO products (
@@ -353,6 +374,7 @@ module.exports = {
   findAll,
   findById,
   findByBarcode,
+  getNextSku,
   create,
   update,
   remove,

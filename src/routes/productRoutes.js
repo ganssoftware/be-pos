@@ -18,6 +18,11 @@ router.get(
 );
 
 router.get(
+  "/next-sku",
+  productController.getNextSku
+);
+
+router.get(
   "/barcode/:barcode",
   productController.getProductByBarcode
 );
