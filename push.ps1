@@ -85,7 +85,7 @@ Write-Host "Membuat commit..." -ForegroundColor Cyan
 $changes = git diff --cached --name-only
 
 if ($changes) {
-    git commit -m "Update Produk API v.1.0.0"
+    git commit -m "Add Report API v.1.0.0"
     Write-Host "Commit berhasil dibuat." -ForegroundColor Green
 }
 else {
