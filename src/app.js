@@ -18,6 +18,7 @@ const shiftScheduleRoutes = require("./routes/shiftScheduleRoutes");
 const transactionRoutes = require("./routes/transactionRoutes");
 const userRoutes = require("./routes/userRoutes");
 const reportRoutes = require("./routes/reportRoutes");
+const dashboardRoutes = require('./routes/dashboardRoutes');
 const errorMiddleware = require("./middleware/errorMiddleware");
 
 const app = express();
@@ -76,6 +77,7 @@ app.use("/api/shift-schedules", shiftScheduleRoutes);
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/reports", reportRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 
 app.use(errorMiddleware);
 
