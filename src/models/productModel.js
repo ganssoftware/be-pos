@@ -220,7 +220,7 @@ async function getNextSku(storeId) {
   return `PRD-${String(nextNumber).padStart(3, "0")}`;
 }
 
-async function create(data) {
+async function create(data, db = pool) {
   const query = `
     INSERT INTO products (
       store_id,
@@ -242,7 +242,7 @@ async function create(data) {
     RETURNING *
   `;
 
-  const result = await pool.query(query, [
+  const result = await db.query(query, [
     data.storeId,
     data.categoryId || null,
     data.unitId || null,

@@ -1,4 +1,5 @@
 const productModel = require("../models/productModel");
+const inventoryModel = require("../models/inventoryModel");
 const pool = require("../config/db");
 const supabaseAdmin = require("../config/supabase");
 
@@ -253,48 +254,106 @@ async function getNextSku(req, res, next) {
 }
 
 async function createProduct(req, res, next) {
+  const client = await pool.connect();
+  let transactionStarted = false;
+
   try {
     const data = validateProductData(req.body);
 
-    await validateCategory(
-      req.storeId,
-      data.categoryId
+    // Validasi stok awal, default 0 jika tidak dikirim.
+    const initialStock = Number(req.body.initial_stock ?? 0);
+
+    if (
+      !Number.isFinite(initialStock) ||
+      initialStock < 0
+    ) {
+      const error = new Error(
+        "Stok awal harus berupa angka >= 0"
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+
+    // Pastikan kategori dan satuan milik store yang aktif.
+    await validateCategory(req.storeId, data.categoryId);
+    await validateUnit(req.storeId, data.unitId);
+
+    await client.query("BEGIN");
+    transactionStarted = true;
+
+    // 1. Buat produk dalam transaksi yang sama.
+    const product = await productModel.create(
+      {
+        storeId: req.storeId,
+        ...data,
+      },
+      client
     );
 
-    await validateUnit(
-      req.storeId,
-      data.unitId
-    );
-
-    const product = await productModel.create({
-      storeId: req.storeId,
-      ...data,
-    });
-
-    // Buat inventory awal dengan stock 0.
-    await pool.query(
+    // 2. Buat inventory dengan stok awal dari form.
+    const inventoryResult = await client.query(
       `
         INSERT INTO inventory (
           store_id,
           product_id,
           quantity
         )
-        VALUES ($1, $2, 0)
+        VALUES ($1, $2, $3)
         ON CONFLICT (store_id, product_id)
-        DO NOTHING
+        DO UPDATE SET
+          quantity = EXCLUDED.quantity,
+          updated_at = NOW()
+        RETURNING *
       `,
       [
         req.storeId,
         product.id,
+        initialStock,
       ]
     );
+
+    // 3. Catat pergerakan stok awal jika jumlahnya > 0.
+    let movement = null;
+
+    if (initialStock > 0) {
+      movement = await inventoryModel.createMovement(
+        client,
+        {
+          storeId: req.storeId,
+          productId: product.id,
+          type: "IN",
+          quantity: initialStock,
+          referenceType: "INITIAL_STOCK",
+          notes: "Stok awal saat produk dibuat",
+          createdBy: req.user.user_id,
+        }
+      );
+    }
+
+    await client.query("COMMIT");
+    transactionStarted = false;
 
     return res.status(201).json({
       success: true,
       message: "Produk berhasil dibuat",
-      data: product,
+      data: {
+        ...product,
+        stock: inventoryResult.rows[0].quantity,
+      },
+      stock_movement: movement,
     });
   } catch (error) {
+    if (transactionStarted) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (rollbackError) {
+        console.error(
+          "Rollback createProduct gagal:",
+          rollbackError
+        );
+      }
+    }
+
     if (error.code === "23505") {
       return res.status(409).json({
         success: false,
@@ -310,7 +369,9 @@ async function createProduct(req, res, next) {
       });
     }
 
-    next(error);
+    return next(error);
+  } finally {
+    client.release();
   }
 }
 
