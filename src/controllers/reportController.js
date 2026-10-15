@@ -349,6 +349,39 @@ async function getShifts(req, res, next) {
   }
 }
 
+async function getProfitLoss(req, res, next) {
+  try {
+    const range = getDateRange(req, res);
+
+    if (!range) return;
+
+    const [summary, trend] = await Promise.all([
+      reportModel.getProfitLoss(
+        req.storeId,
+        range.startDate,
+        range.endDate
+      ),
+
+      reportModel.getProfitLossTrend(
+        req.storeId,
+        range.startDate,
+        range.endDate
+      ),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        period: range,
+        summary,
+        trend,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   getOverview,
   getSales,
@@ -358,4 +391,5 @@ module.exports = {
   getMovements,
   getProducts,
   getShifts,
+  getProfitLoss,
 };

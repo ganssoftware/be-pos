@@ -392,16 +392,25 @@ async function getTopProducts(
       ti.product_name,
       ti.sku,
 
-      COALESCE(SUM(ti.quantity), 0) AS quantity_sold,
-      COALESCE(SUM(ti.subtotal), 0) AS total_sales,
+      COALESCE(
+        SUM(ti.quantity), 0
+      ) AS quantity_sold,
+
+      COALESCE(
+        SUM(ti.subtotal), 0
+      ) AS total_sales,
 
       COALESCE(
         SUM(
-          (
-            ti.quantity * (
-              ti.price - COALESCE(p.purchase_price, 0)
-            )
-          ) - ti.discount
+          (ti.quantity * ti.cost_price)
+        ),
+        0
+      ) AS total_cost,
+
+      COALESCE(
+        SUM(
+          ti.subtotal -
+          (ti.quantity * ti.cost_price)
         ),
         0
       ) AS estimated_gross_profit
@@ -411,18 +420,20 @@ async function getTopProducts(
     INNER JOIN transactions t
       ON t.id = ti.transaction_id
 
-    LEFT JOIN products p
-      ON p.id = ti.product_id
-      AND p.store_id = t.store_id
-
     WHERE t.store_id = $1
       AND t.status = 'COMPLETED'
       ${DATE_FILTER}
       AND ($4::uuid IS NULL OR t.user_id = $4)
 
-    GROUP BY ti.product_id, ti.product_name, ti.sku
+    GROUP BY
+      ti.product_id,
+      ti.product_name,
+      ti.sku
 
-    ORDER BY quantity_sold DESC, total_sales DESC
+    ORDER BY
+      quantity_sold DESC,
+      total_sales DESC
+
     LIMIT 10
     `,
     [storeId, startDate, endDate, userId]
@@ -432,9 +443,226 @@ async function getTopProducts(
     ...row,
     quantity_sold: Number(row.quantity_sold),
     total_sales: Number(row.total_sales),
+    total_cost: Number(row.total_cost),
     estimated_gross_profit: Number(
       row.estimated_gross_profit
     ),
+  }));
+}
+
+async function getProfitLoss(
+  storeId,
+  startDate,
+  endDate
+) {
+  const result = await pool.query(
+    `
+    WITH sales AS (
+      SELECT
+        COALESCE(
+          SUM(t.subtotal - t.discount),
+          0
+        ) AS net_sales
+      FROM transactions t
+      WHERE t.store_id = $1
+        AND t.status = 'COMPLETED'
+        ${DATE_FILTER}
+    ),
+
+    cost_of_goods AS (
+      SELECT
+        COALESCE(
+          SUM(ti.quantity * ti.cost_price),
+          0
+        ) AS total_cogs
+      FROM transaction_items ti
+      INNER JOIN transactions t
+        ON t.id = ti.transaction_id
+      WHERE t.store_id = $1
+        AND t.status = 'COMPLETED'
+        ${DATE_FILTER}
+    ),
+
+    expense_totals AS (
+      SELECT
+        COALESCE(SUM(e.amount), 0) AS total_expenses
+      FROM public.expenses e
+      WHERE e.store_id = $1
+        AND e.created_at >= (
+          $2::date::timestamp
+          AT TIME ZONE '${JAKARTA_TZ}'
+        )
+        AND e.created_at < (
+          ($3::date + INTERVAL '1 day')::timestamp
+          AT TIME ZONE '${JAKARTA_TZ}'
+        )
+    )
+
+    SELECT
+      sales.net_sales,
+      cost_of_goods.total_cogs,
+
+      (
+        sales.net_sales -
+        cost_of_goods.total_cogs
+      ) AS gross_profit,
+
+      expense_totals.total_expenses,
+
+      (
+        sales.net_sales -
+        cost_of_goods.total_cogs -
+        expense_totals.total_expenses
+      ) AS net_profit
+
+    FROM sales
+    CROSS JOIN cost_of_goods
+    CROSS JOIN expense_totals
+    `,
+    [storeId, startDate, endDate]
+  );
+
+  const row = result.rows[0];
+
+  return {
+    net_sales: Number(row.net_sales),
+    total_cogs: Number(row.total_cogs),
+    gross_profit: Number(row.gross_profit),
+    total_expenses: Number(row.total_expenses),
+    net_profit: Number(row.net_profit),
+  };
+}
+
+async function getProfitLossTrend(
+  storeId,
+  startDate,
+  endDate
+) {
+  const result = await pool.query(
+    `
+    WITH dates AS (
+      SELECT generate_series(
+        $2::date,
+        $3::date,
+        INTERVAL '1 day'
+      )::date AS report_date
+    ),
+
+    daily_sales AS (
+      SELECT
+        (t.created_at AT TIME ZONE '${JAKARTA_TZ}')::date
+          AS report_date,
+
+        COALESCE(
+          SUM(t.subtotal - t.discount),
+          0
+        ) AS net_sales
+
+      FROM transactions t
+
+      WHERE t.store_id = $1
+        AND t.status = 'COMPLETED'
+        ${DATE_FILTER}
+
+      GROUP BY report_date
+    ),
+
+    daily_cogs AS (
+      SELECT
+        (t.created_at AT TIME ZONE '${JAKARTA_TZ}')::date
+          AS report_date,
+
+        COALESCE(
+          SUM(ti.quantity * ti.cost_price),
+          0
+        ) AS total_cogs
+
+      FROM transaction_items ti
+
+      INNER JOIN transactions t
+        ON t.id = ti.transaction_id
+
+      WHERE t.store_id = $1
+        AND t.status = 'COMPLETED'
+        ${DATE_FILTER}
+
+      GROUP BY report_date
+    ),
+
+    daily_expenses AS (
+      SELECT
+        (e.created_at AT TIME ZONE '${JAKARTA_TZ}')::date
+          AS report_date,
+
+        COALESCE(
+          SUM(e.amount),
+          0
+        ) AS total_expenses
+
+      FROM public.expenses e
+
+      WHERE e.store_id = $1
+        AND e.created_at >= (
+          $2::date::timestamp
+          AT TIME ZONE '${JAKARTA_TZ}'
+        )
+        AND e.created_at < (
+          ($3::date + INTERVAL '1 day')::timestamp
+          AT TIME ZONE '${JAKARTA_TZ}'
+        )
+
+      GROUP BY report_date
+    )
+
+    SELECT
+      dates.report_date AS date,
+
+      COALESCE(
+        daily_sales.net_sales, 0
+      ) AS net_sales,
+
+      COALESCE(
+        daily_cogs.total_cogs, 0
+      ) AS total_cogs,
+
+      (
+        COALESCE(daily_sales.net_sales, 0) -
+        COALESCE(daily_cogs.total_cogs, 0)
+      ) AS gross_profit,
+
+      COALESCE(
+        daily_expenses.total_expenses, 0
+      ) AS total_expenses,
+
+      (
+        COALESCE(daily_sales.net_sales, 0) -
+        COALESCE(daily_cogs.total_cogs, 0) -
+        COALESCE(daily_expenses.total_expenses, 0)
+      ) AS net_profit
+
+    FROM dates
+
+    LEFT JOIN daily_sales
+      ON daily_sales.report_date = dates.report_date
+
+    LEFT JOIN daily_cogs
+      ON daily_cogs.report_date = dates.report_date
+
+    LEFT JOIN daily_expenses
+      ON daily_expenses.report_date = dates.report_date
+
+    ORDER BY dates.report_date ASC
+    `,
+    [storeId, startDate, endDate]
+  );
+
+  return result.rows.map((row) => ({
+    date: row.date,
+    net_sales: Number(row.net_sales),
+    total_cogs: Number(row.total_cogs),
+    gross_profit: Number(row.gross_profit),
+    total_expenses: Number(row.total_expenses),
+    net_profit: Number(row.net_profit),
   }));
 }
 
@@ -512,5 +740,7 @@ module.exports = {
   getLowStockProducts,
   getStockMovements,
   getTopProducts,
+  getProfitLoss,
+  getProfitLossTrend,
   getShiftSummary,
 };

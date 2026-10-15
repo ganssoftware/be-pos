@@ -71,6 +71,7 @@ async function createItem(
     sku,
     quantity,
     price,
+    costPrice,
     discount,
     subtotal,
   }
@@ -83,24 +84,12 @@ async function createItem(
       sku,
       quantity,
       price,
+      cost_price,
       discount,
       subtotal
     )
-    VALUES (
-      $1, $2, $3, $4,
-      $5, $6, $7, $8
-    )
-    RETURNING
-      id,
-      transaction_id,
-      product_id,
-      product_name,
-      sku,
-      quantity,
-      price,
-      discount,
-      subtotal,
-      created_at
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    RETURNING *
   `;
 
   const result = await client.query(query, [
@@ -110,6 +99,7 @@ async function createItem(
     sku,
     quantity,
     price,
+    costPrice,
     discount,
     subtotal,
   ]);
@@ -146,9 +136,7 @@ async function findById(id, storeId) {
   return result.rows[0] || null;
 }
 
-async function findItemsByTransactionId(
-  transactionId
-) {
+async function findItemsByTransactionId(transactionId) {
   const query = `
     SELECT
       id,
@@ -158,6 +146,7 @@ async function findItemsByTransactionId(
       sku,
       quantity,
       price,
+      cost_price,
       discount,
       subtotal,
       created_at
@@ -206,9 +195,7 @@ async function findAll(
     );
   }
 
-  const whereClause =
-    conditions.join(" AND ");
-
+  const whereClause = conditions.join(" AND ");
   const countValues = [...values];
 
   const countQuery = `
@@ -237,45 +224,26 @@ async function findAll(
       t.total,
       t.status,
       t.created_at,
-
       u.username,
       u.full_name,
-
       c.name AS customer_name
-
     FROM transactions t
-
     INNER JOIN users u
       ON u.id = t.user_id
-
     LEFT JOIN customers c
       ON c.id = t.customer_id
-
     WHERE ${whereClause}
-
     ORDER BY t.created_at DESC
-
     LIMIT ${limitParam}
     OFFSET ${offsetParam}
   `;
 
-  const [
-    countResult,
-    dataResult,
-  ] = await Promise.all([
-    pool.query(
-      countQuery,
-      countValues
-    ),
-    pool.query(
-      dataQuery,
-      values
-    ),
+  const [countResult, dataResult] = await Promise.all([
+    pool.query(countQuery, countValues),
+    pool.query(dataQuery, values),
   ]);
 
-  const total = Number(
-    countResult.rows[0].total
-  );
+  const total = Number(countResult.rows[0].total);
 
   return {
     data: dataResult.rows,
@@ -283,17 +251,12 @@ async function findAll(
       page,
       limit,
       total,
-      total_pages: Math.ceil(
-        total / limit
-      ),
+      total_pages: Math.ceil(total / limit),
     },
   };
 }
 
-async function findDetailById(
-  id,
-  storeId
-) {
+async function findDetailById(id, storeId) {
   const transactionQuery = `
     SELECT
       t.id,
@@ -308,24 +271,17 @@ async function findDetailById(
       t.total,
       t.status,
       t.created_at,
-
       u.username,
       u.full_name,
-
       c.name AS customer_name,
       c.phone AS customer_phone
-
     FROM transactions t
-
     INNER JOIN users u
       ON u.id = t.user_id
-
     LEFT JOIN customers c
       ON c.id = t.customer_id
-
     WHERE t.id = $1
       AND t.store_id = $2
-
     LIMIT 1
   `;
 
@@ -338,6 +294,7 @@ async function findDetailById(
       sku,
       quantity,
       price,
+      cost_price,
       discount,
       subtotal,
       created_at
@@ -361,22 +318,16 @@ async function findDetailById(
     ORDER BY paid_at ASC
   `;
 
-  const transactionResult =
-    await pool.query(
-      transactionQuery,
-      [id, storeId]
-    );
+  const transactionResult = await pool.query(
+    transactionQuery,
+    [id, storeId]
+  );
 
-  if (
-    transactionResult.rowCount === 0
-  ) {
+  if (transactionResult.rowCount === 0) {
     return null;
   }
 
-  const [
-    itemsResult,
-    paymentsResult,
-  ] = await Promise.all([
+  const [itemsResult, paymentsResult] = await Promise.all([
     pool.query(itemsQuery, [id]),
     pool.query(paymentsQuery, [id]),
   ]);
@@ -407,20 +358,28 @@ async function findByIdForUpdate(client, id, storeId) {
       u.full_name,
       c.name AS customer_name
     FROM transactions t
-    INNER JOIN users u ON u.id = t.user_id
-    LEFT JOIN customers c ON c.id = t.customer_id
+    INNER JOIN users u
+      ON u.id = t.user_id
+    LEFT JOIN customers c
+      ON c.id = t.customer_id
     WHERE t.id = $1
       AND t.store_id = $2
     LIMIT 1
     FOR UPDATE
   `;
 
-  const result = await client.query(query, [id, storeId]);
+  const result = await client.query(query, [
+    id,
+    storeId,
+  ]);
 
   return result.rows[0] || null;
 }
 
-async function findItemsByTransactionIdForUpdate(client, transactionId) {
+async function findItemsByTransactionIdForUpdate(
+  client,
+  transactionId
+) {
   const query = `
     SELECT
       id,
@@ -430,6 +389,7 @@ async function findItemsByTransactionIdForUpdate(client, transactionId) {
       sku,
       quantity,
       price,
+      cost_price,
       discount,
       subtotal,
       created_at
@@ -439,7 +399,9 @@ async function findItemsByTransactionIdForUpdate(client, transactionId) {
     FOR UPDATE
   `;
 
-  const result = await client.query(query, [transactionId]);
+  const result = await client.query(query, [
+    transactionId,
+  ]);
 
   return result.rows;
 }

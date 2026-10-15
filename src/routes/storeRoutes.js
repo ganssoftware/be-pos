@@ -1,3 +1,4 @@
+
 const express = require("express");
 const router = express.Router();
 
@@ -9,27 +10,30 @@ const storeController = require("../controllers/storeController");
 router.use(authMiddleware);
 
 router.get(
-  "/",
-  storeController.getMyStores
+    "/",
+    storeController.getMyStores
 );
 
 router.post(
-  "/",
-  roleMiddleware("owner"),
-  storeController.createStore
+    "/",
+    roleMiddleware("owner"),
+    upload.single("image"),
+    storeController.createStore
 );
 
 router.put(
-  "/:storeId",
-  roleMiddleware("owner"),
-  storeController.updateStore
+    "/:storeId",
+    roleMiddleware("owner"),
+    upload.single("image"),
+    storeController.updateStore
 );
 
+// Endpoint khusus untuk mengganti foto toko saja.
 router.post(
-  "/:storeId/image",
-  roleMiddleware("owner"),
-  upload.single("image"),
-  storeController.uploadStoreImage
+    "/:storeId/image",
+    roleMiddleware("owner"),
+    upload.single("image"),
+    storeController.uploadStoreImage
 );
 
 module.exports = router;

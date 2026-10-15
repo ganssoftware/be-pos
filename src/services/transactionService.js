@@ -91,7 +91,7 @@ async function checkout({
     }
 
     // --------------------------------------------------
-    // 3. Hitung item berdasarkan harga DB
+    // 3. Hitung item berdasarkan harga dari database
     // --------------------------------------------------
 
     const processedItems = [];
@@ -110,21 +110,15 @@ async function checkout({
       );
 
       if (!productId) {
-        throw new Error(
-          "Product ID wajib diisi"
-        );
+        throw new Error("Product ID wajib diisi");
       }
 
       if (quantity === null) {
-        throw new Error(
-          "Quantity produk tidak valid"
-        );
+        throw new Error("Quantity produk tidak valid");
       }
 
       if (itemDiscount === null) {
-        throw new Error(
-          "Discount item tidak valid"
-        );
+        throw new Error("Discount item tidak valid");
       }
 
       const product =
@@ -135,9 +129,7 @@ async function checkout({
         );
 
       if (!product) {
-        throw new Error(
-          "Produk tidak ditemukan"
-        );
+        throw new Error("Produk tidak ditemukan");
       }
 
       if (!product.is_active) {
@@ -167,9 +159,23 @@ async function checkout({
         );
       }
 
-      const price = Number(
-        product.selling_price
-      );
+      const price = Number(product.selling_price);
+      const costPrice = Number(product.purchase_price);
+
+      if (!Number.isFinite(price) || price < 0) {
+        throw new Error(
+          `Harga jual produk "${product.name}" tidak valid`
+        );
+      }
+
+      if (
+        !Number.isFinite(costPrice) ||
+        costPrice < 0
+      ) {
+        throw new Error(
+          `Harga beli produk "${product.name}" tidak valid`
+        );
+      }
 
       const itemSubtotal =
         price * quantity - itemDiscount;
@@ -187,6 +193,7 @@ async function checkout({
         inventory,
         quantity,
         price,
+        costPrice,
         discount: itemDiscount,
         subtotal: itemSubtotal,
       });
@@ -211,9 +218,7 @@ async function checkout({
     }
 
     if (transactionTax === null) {
-      throw new Error(
-        "Tax tidak valid"
-      );
+      throw new Error("Tax tidak valid");
     }
 
     if (transactionDiscount > subtotal) {
@@ -228,9 +233,7 @@ async function checkout({
       transactionTax;
 
     if (total < 0) {
-      throw new Error(
-        "Total transaksi tidak valid"
-      );
+      throw new Error("Total transaksi tidak valid");
     }
 
     // --------------------------------------------------
@@ -252,9 +255,7 @@ async function checkout({
     const processedPayments = [];
 
     for (const payment of payments) {
-      const method = String(
-        payment.method || ""
-      )
+      const method = String(payment.method || "")
         .trim()
         .toUpperCase();
 
@@ -262,26 +263,19 @@ async function checkout({
         payment.amount
       );
 
-      if (
-        !ALLOWED_PAYMENT_METHODS.includes(method)
-      ) {
+      if (!ALLOWED_PAYMENT_METHODS.includes(method)) {
         throw new Error(
           `Metode pembayaran "${method}" tidak valid`
         );
       }
 
       if (amount === null) {
-        throw new Error(
-          "Nominal pembayaran tidak valid"
-        );
+        throw new Error("Nominal pembayaran tidak valid");
       }
 
       let amountReceived;
 
-      // -----------------------------------------------
       // CASH
-      // -----------------------------------------------
-
       if (method === "CASH") {
         amountReceived = parsePositiveNumber(
           payment.amount_received
@@ -298,13 +292,8 @@ async function checkout({
             "Uang CASH yang diterima kurang dari nominal pembayaran"
           );
         }
-      }
-
-      // -----------------------------------------------
-      // NON CASH
-      // -----------------------------------------------
-
-      else {
+      } else {
+        // NON-CASH
         amountReceived = parsePositiveNumber(
           payment.amount_received ?? amount
         );
@@ -329,8 +318,8 @@ async function checkout({
       const changeAmount =
         method === "CASH"
           ? Number(
-            (amountReceived - amount).toFixed(2)
-          )
+              (amountReceived - amount).toFixed(2)
+            )
           : 0;
 
       paymentTotal += amount;
@@ -349,33 +338,8 @@ async function checkout({
       });
     }
 
-    console.log("=== PAYMENT DEBUG ===");
-    console.log("subtotal:", subtotal);
-    console.log(
-      "transactionDiscount:",
-      transactionDiscount
-    );
-    console.log(
-      "transactionTax:",
-      transactionTax
-    );
-    console.log("total:", total);
-    console.log("payments:", processedPayments);
-    console.log("paymentTotal:", paymentTotal);
-    console.log(
-      "cashExpectedCash:",
-      cashExpectedCash
-    );
-    console.log("=====================");
-
-    // Toleransi floating point JS
     const paymentDifference = Number(
       (paymentTotal - total).toFixed(2)
-    );
-
-    console.log(
-      "paymentDifference:",
-      paymentDifference
     );
 
     if (paymentDifference !== 0) {
@@ -389,21 +353,17 @@ async function checkout({
     // --------------------------------------------------
 
     const transaction =
-      await transactionModel.create(
-        client,
-        {
-          storeId,
-          shiftId: shift.id,
-          userId,
-          customerId,
-          transactionNumber:
-            generateTransactionNumber(),
-          subtotal,
-          discount: transactionDiscount,
-          tax: transactionTax,
-          total,
-        }
-      );
+      await transactionModel.create(client, {
+        storeId,
+        shiftId: shift.id,
+        userId,
+        customerId,
+        transactionNumber: generateTransactionNumber(),
+        subtotal,
+        discount: transactionDiscount,
+        tax: transactionTax,
+        total,
+      });
 
     // --------------------------------------------------
     // 7. Buat transaction items + OUT stock
@@ -426,38 +386,31 @@ async function checkout({
       }
 
       const transactionItem =
-        await transactionModel.createItem(
-          client,
-          {
-            transactionId: transaction.id,
-            productId: item.product.id,
-            productName: item.product.name,
-            sku: item.product.sku,
-            quantity: item.quantity,
-            price: item.price,
-            discount: item.discount,
-            subtotal: item.subtotal,
-          }
-        );
-
-      await inventoryModel.createMovement(
-        client,
-        {
-          storeId,
+        await transactionModel.createItem(client, {
+          transactionId: transaction.id,
           productId: item.product.id,
-          type: "OUT",
+          productName: item.product.name,
+          sku: item.product.sku,
           quantity: item.quantity,
-          referenceType: "TRANSACTION",
-          referenceId: transaction.id,
-          notes:
-            `Penjualan ${transaction.transaction_number}`,
-          createdBy: userId,
-        }
-      );
+          price: item.price,
+          costPrice: item.costPrice,
+          discount: item.discount,
+          subtotal: item.subtotal,
+        });
 
-      createdItems.push(
-        transactionItem
-      );
+      await inventoryModel.createMovement(client, {
+        storeId,
+        productId: item.product.id,
+        type: "OUT",
+        quantity: item.quantity,
+        referenceType: "TRANSACTION",
+        referenceId: transaction.id,
+        notes:
+          `Penjualan ${transaction.transaction_number}`,
+        createdBy: userId,
+      });
+
+      createdItems.push(transactionItem);
     }
 
     // --------------------------------------------------
@@ -468,24 +421,16 @@ async function checkout({
 
     for (const payment of processedPayments) {
       const createdPayment =
-        await paymentModel.create(
-          client,
-          {
-            transactionId: transaction.id,
-            method: payment.method,
-            amount: payment.amount,
-            amountReceived:
-              payment.amountReceived,
-            changeAmount:
-              payment.changeAmount,
-            referenceNumber:
-              payment.referenceNumber,
-          }
-        );
+        await paymentModel.create(client, {
+          transactionId: transaction.id,
+          method: payment.method,
+          amount: payment.amount,
+          amountReceived: payment.amountReceived,
+          changeAmount: payment.changeAmount,
+          referenceNumber: payment.referenceNumber,
+        });
 
-      createdPayments.push(
-        createdPayment
-      );
+      createdPayments.push(createdPayment);
     }
 
     // --------------------------------------------------
@@ -501,9 +446,7 @@ async function checkout({
         );
 
       if (!updatedShift) {
-        throw new Error(
-          "Shift sudah tidak aktif"
-        );
+        throw new Error("Shift sudah tidak aktif");
       }
     }
 
@@ -544,7 +487,6 @@ async function voidTransaction({
   try {
     await client.query("BEGIN");
 
-    // 1. Lock transaksi
     const transaction =
       await transactionModel.findByIdForUpdate(
         client,
@@ -556,15 +498,12 @@ async function voidTransaction({
       throw new Error("Transaksi tidak ditemukan");
     }
 
-    // 2. Hanya transaksi COMPLETED yang boleh di-VOID
     if (transaction.status !== "COMPLETED") {
       throw new Error(
         `Transaksi tidak dapat di-void karena status saat ini ${transaction.status}`
       );
     }
 
-    // 3. Cashier hanya boleh void transaksi miliknya.
-    // Owner boleh void transaksi siapa pun.
     if (
       role !== "owner" &&
       transaction.user_id !== userId
@@ -574,14 +513,12 @@ async function voidTransaction({
       );
     }
 
-    // 4. Transaksi harus memiliki shift
     if (!transaction.shift_id) {
       throw new Error(
         "Transaksi tidak memiliki shift"
       );
     }
 
-    // 5. Lock shift
     const shift = await shiftModel.findByIdForUpdate(
       client,
       transaction.shift_id,
@@ -592,15 +529,12 @@ async function voidTransaction({
       throw new Error("Shift transaksi tidak ditemukan");
     }
 
-    // Untuk MVP:
-    // transaksi hanya bisa di-VOID ketika shift masih OPEN.
     if (shift.status !== "OPEN") {
       throw new Error(
         "Transaksi hanya dapat di-void selama shift terkait masih OPEN"
       );
     }
 
-    // 6. Lock item transaksi
     const items =
       await transactionModel.findItemsByTransactionIdForUpdate(
         client,
@@ -608,19 +542,15 @@ async function voidTransaction({
       );
 
     if (!items.length) {
-      throw new Error(
-        "Item transaksi tidak ditemukan"
-      );
+      throw new Error("Item transaksi tidak ditemukan");
     }
 
-    // 7. Lock payment
     const payments =
       await paymentModel.findByTransactionIdForUpdate(
         client,
         transaction.id
       );
 
-    // 8. Kembalikan stok
     const restoredItems = [];
 
     for (const item of items) {
@@ -650,7 +580,6 @@ async function voidTransaction({
           Number(item.quantity)
         );
 
-      // Catat pergerakan stok
       const movement =
         await inventoryModel.createMovement(client, {
           storeId,
@@ -659,7 +588,8 @@ async function voidTransaction({
           quantity: Number(item.quantity),
           referenceType: "VOID",
           referenceId: transaction.id,
-          notes: `Pengembalian stok karena void ${transaction.transaction_number}`,
+          notes:
+            `Pengembalian stok karena void ${transaction.transaction_number}`,
           createdBy: userId,
         });
 
@@ -672,7 +602,6 @@ async function voidTransaction({
       });
     }
 
-    // 9. Hitung uang CASH yang harus dibalik
     const cashPayment = payments
       .filter((payment) => payment.method === "CASH")
       .reduce(
@@ -682,7 +611,6 @@ async function voidTransaction({
 
     let updatedShift = shift;
 
-    // 10. Kurangi expected_cash
     if (cashPayment > 0) {
       updatedShift =
         await shiftModel.decreaseExpectedCash(
@@ -698,7 +626,6 @@ async function voidTransaction({
       }
     }
 
-    // 11. Ubah status transaksi
     const updatedTransaction =
       await transactionModel.updateStatus(
         client,
@@ -707,7 +634,6 @@ async function voidTransaction({
         "VOID"
       );
 
-    // 12. Commit
     await client.query("COMMIT");
 
     return {
@@ -740,7 +666,6 @@ async function refundTransaction({
   try {
     await client.query("BEGIN");
 
-    // 1. Lock transaksi
     const transaction =
       await transactionModel.findByIdForUpdate(
         client,
@@ -752,15 +677,12 @@ async function refundTransaction({
       throw new Error("Transaksi tidak ditemukan");
     }
 
-    // 2. Hanya transaksi COMPLETED yang bisa direfund
     if (transaction.status !== "COMPLETED") {
       throw new Error(
         `Transaksi tidak dapat direfund karena status saat ini ${transaction.status}`
       );
     }
 
-    // 3. Cashier hanya boleh refund transaksi miliknya
-    // Owner boleh refund transaksi siapa pun
     if (
       role !== "owner" &&
       transaction.user_id !== userId
@@ -770,14 +692,12 @@ async function refundTransaction({
       );
     }
 
-    // 4. Transaksi harus mempunyai shift
     if (!transaction.shift_id) {
       throw new Error(
         "Transaksi tidak memiliki shift"
       );
     }
 
-    // 5. Lock shift
     const shift = await shiftModel.findByIdForUpdate(
       client,
       transaction.shift_id,
@@ -788,15 +708,12 @@ async function refundTransaction({
       throw new Error("Shift transaksi tidak ditemukan");
     }
 
-    // MVP:
-    // refund hanya ketika shift masih OPEN
     if (shift.status !== "OPEN") {
       throw new Error(
         "Transaksi hanya dapat direfund selama shift terkait masih OPEN"
       );
     }
 
-    // 6. Lock item transaksi
     const items =
       await transactionModel.findItemsByTransactionIdForUpdate(
         client,
@@ -804,19 +721,15 @@ async function refundTransaction({
       );
 
     if (!items.length) {
-      throw new Error(
-        "Item transaksi tidak ditemukan"
-      );
+      throw new Error("Item transaksi tidak ditemukan");
     }
 
-    // 7. Lock payment
     const payments =
       await paymentModel.findByTransactionIdForUpdate(
         client,
         transaction.id
       );
 
-    // 8. Kembalikan stok
     const restoredItems = [];
 
     for (const item of items) {
@@ -854,7 +767,8 @@ async function refundTransaction({
           quantity: Number(item.quantity),
           referenceType: "REFUND",
           referenceId: transaction.id,
-          notes: `Pengembalian stok karena refund ${transaction.transaction_number}`,
+          notes:
+            `Pengembalian stok karena refund ${transaction.transaction_number}`,
           createdBy: userId,
         });
 
@@ -867,7 +781,6 @@ async function refundTransaction({
       });
     }
 
-    // 9. Hitung pembayaran CASH
     const cashPayment = payments
       .filter((payment) => payment.method === "CASH")
       .reduce(
@@ -877,7 +790,6 @@ async function refundTransaction({
 
     let updatedShift = shift;
 
-    // 10. Kurangi expected cash
     if (cashPayment > 0) {
       updatedShift =
         await shiftModel.decreaseExpectedCash(
@@ -893,7 +805,6 @@ async function refundTransaction({
       }
     }
 
-    // 11. Ubah status transaksi
     const updatedTransaction =
       await transactionModel.updateStatus(
         client,
@@ -902,7 +813,6 @@ async function refundTransaction({
         "REFUNDED"
       );
 
-    // 12. Commit
     await client.query("COMMIT");
 
     return {

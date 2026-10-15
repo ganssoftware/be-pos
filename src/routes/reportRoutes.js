@@ -33,4 +33,10 @@ router.get(
   reportController.getMovements
 );
 
+router.get(
+  "/profit-loss",
+  ownerOnly,
+  reportController.getProfitLoss
+);
+
 module.exports = router;

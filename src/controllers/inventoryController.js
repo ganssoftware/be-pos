@@ -115,10 +115,19 @@ async function getInventoryByProduct(
 }
 
 async function stockIn(req, res, next) {
-    const client = await pool.connect();
+    let client;
+    let transactionStarted = false;
 
     try {
         const productId = req.body.product_id;
+
+        // Validasi product_id sebelum membuka koneksi.
+        if (!productId) {
+            return res.status(400).json({
+                success: false,
+                message: "Product ID wajib diisi",
+            });
+        }
 
         const quantity = parsePositiveNumber(
             req.body.quantity,
@@ -129,15 +138,13 @@ async function stockIn(req, res, next) {
             ? String(req.body.notes).trim()
             : null;
 
-        if (!productId) {
-            return res.status(400).json({
-                success: false,
-                message: "Product ID wajib diisi",
-            });
-        }
+        // Buka koneksi database.
+        client = await pool.connect();
 
         await client.query("BEGIN");
+        transactionStarted = true;
 
+        // Ambil data produk dan kunci baris selama transaksi.
         const product =
             await inventoryModel.findProductForUpdate(
                 client,
@@ -147,6 +154,7 @@ async function stockIn(req, res, next) {
 
         if (!product) {
             await client.query("ROLLBACK");
+            transactionStarted = false;
 
             return res.status(404).json({
                 success: false,
@@ -154,8 +162,10 @@ async function stockIn(req, res, next) {
             });
         }
 
+        // Produk tidak aktif tidak boleh ditambahkan stoknya.
         if (!product.is_active) {
             await client.query("ROLLBACK");
+            transactionStarted = false;
 
             return res.status(400).json({
                 success: false,
@@ -163,6 +173,7 @@ async function stockIn(req, res, next) {
             });
         }
 
+        // Ambil inventory produk.
         const inventory =
             await inventoryModel.getInventoryForUpdate(
                 client,
@@ -172,6 +183,7 @@ async function stockIn(req, res, next) {
 
         if (!inventory) {
             await client.query("ROLLBACK");
+            transactionStarted = false;
 
             return res.status(404).json({
                 success: false,
@@ -179,6 +191,7 @@ async function stockIn(req, res, next) {
             });
         }
 
+        // Tambahkan stok.
         const updatedInventory =
             await inventoryModel.increaseStock(
                 client,
@@ -186,6 +199,7 @@ async function stockIn(req, res, next) {
                 quantity
             );
 
+        // Catat pergerakan stok.
         const movement =
             await inventoryModel.createMovement(
                 client,
@@ -200,7 +214,9 @@ async function stockIn(req, res, next) {
                 }
             );
 
+        // Simpan seluruh perubahan.
         await client.query("COMMIT");
+        transactionStarted = false;
 
         return res.status(201).json({
             success: true,
@@ -211,7 +227,19 @@ async function stockIn(req, res, next) {
             },
         });
     } catch (error) {
-        await client.query("ROLLBACK");
+        // Batalkan perubahan hanya jika transaksi masih aktif.
+        if (client && transactionStarted) {
+            try {
+                await client.query("ROLLBACK");
+            } catch (rollbackError) {
+                console.error(
+                    "Rollback stockIn gagal:",
+                    rollbackError
+                );
+            }
+
+            transactionStarted = false;
+        }
 
         if (error.statusCode) {
             return res.status(error.statusCode).json({
@@ -220,9 +248,12 @@ async function stockIn(req, res, next) {
             });
         }
 
-        next(error);
+        return next(error);
     } finally {
-        client.release();
+        // Pastikan koneksi selalu dilepas.
+        if (client) {
+            client.release();
+        }
     }
 }
 
