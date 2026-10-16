@@ -10,7 +10,7 @@ const {
 
 const router = express.Router();
 
-const reportRoles = allowReportRoles("owner", "kasir");
+const reportRoles = allowReportRoles("owner", "cashier");
 const ownerOnly = allowReportRoles("owner");
 
 router.use(authMiddleware);

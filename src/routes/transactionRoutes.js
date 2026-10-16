@@ -1,8 +1,10 @@
+
 const express = require("express");
 
 const transactionController = require("../controllers/transactionController");
 
 const authMiddleware = require("../middleware/authMiddleware");
+const roleMiddleware = require("../middleware/roleMiddleware");
 const storeMiddleware = require("../middleware/storeMiddleware");
 
 const router = express.Router();
@@ -10,16 +12,44 @@ const router = express.Router();
 router.use(authMiddleware);
 router.use(storeMiddleware);
 
-router.get("/", transactionController.getTransactions);
+// Riwayat transaksi toko.
+router.get(
+    "/",
+    roleMiddleware("owner", "cashier"),
+    transactionController.getTransactions
+);
 
-router.post("/:id/void", transactionController.voidTransaction);
+// Checkout boleh dilakukan owner dan cashier.
+// Transaction service tetap mewajibkan shift OPEN milik user tersebut.
+router.post(
+    "/",
+    roleMiddleware("owner", "cashier"),
+    transactionController.checkout
+);
 
-router.post("/:id/refund", transactionController.refundTransaction);
+// Void dan refund: otorisasi detail tetap divalidasi service.
+router.post(
+    "/:id/void",
+    roleMiddleware("owner", "cashier"),
+    transactionController.voidTransaction
+);
 
-router.get("/:id/receipt", transactionController.getReceipt);
+router.post(
+    "/:id/refund",
+    roleMiddleware("owner", "cashier"),
+    transactionController.refundTransaction
+);
 
-router.get("/:id", transactionController.getTransactionById);
+router.get(
+    "/:id/receipt",
+    roleMiddleware("owner", "cashier"),
+    transactionController.getReceipt
+);
 
-router.post("/", transactionController.checkout);
+router.get(
+    "/:id",
+    roleMiddleware("owner", "cashier"),
+    transactionController.getTransactionById
+);
 
 module.exports = router;

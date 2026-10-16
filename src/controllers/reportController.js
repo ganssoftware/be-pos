@@ -119,7 +119,7 @@ function getPagination(req, res) {
 // Owner mendapatkan seluruh data toko.
 // Kasir hanya mendapatkan data miliknya.
 function getReportUserId(req) {
-  return getRoleName(req.user) === "kasir"
+  return getRoleName(req.user) === "cashier"
     ? req.user.user_id
     : null;
 }
