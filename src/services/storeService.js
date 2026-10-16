@@ -39,7 +39,7 @@ async function uploadImage(file, storeId) {
 
     const { error: uploadError } =
         await supabase.storage
-            .from("uploads")
+            .from("store-images")
             .upload(filePath, file.buffer, {
                 contentType: file.mimetype,
                 upsert: false,
@@ -50,7 +50,7 @@ async function uploadImage(file, storeId) {
     }
 
     const { data } = supabase.storage
-        .from("uploads")
+        .from("store-images")
         .getPublicUrl(filePath);
 
     return {
@@ -67,7 +67,7 @@ function getStoragePath(imageUrl) {
     try {
         const pathname = new URL(imageUrl).pathname;
         const marker =
-            "/storage/v1/object/public/uploads/";
+            "/storage/v1/object/public/store-images/";
 
         const index = pathname.indexOf(marker);
 
@@ -89,7 +89,7 @@ async function deleteStorageImage(filePath) {
     }
 
     const { error } = await supabase.storage
-        .from("uploads")
+        .from("store-images")
         .remove([filePath]);
 
     if (error) {
