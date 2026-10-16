@@ -1,4 +1,4 @@
-
+const { randomUUID } = require("crypto");
 const pool = require("../config/db");
 const supabase = require("../config/supabase");
 
@@ -173,7 +173,7 @@ async function ownerHasStore(ownerId, storeId) {
 }
 
 async function createStore(ownerId, data, file = null) {
-    const { name, code, address, phone } = data;
+    const { name, address, phone } = data;
 
     let client;
     let transactionStarted = false;
@@ -185,10 +185,17 @@ async function createStore(ownerId, data, file = null) {
         await client.query("BEGIN");
         transactionStarted = true;
 
-        // Buat toko terlebih dahulu agar mendapatkan ID.
+        // Buat UUID dan Kode Toko secara otomatis.
+        const storeId = randomUUID();
+
+        const code =
+            `TOKO-${storeId.replace(/-/g, "").slice(0, 16).toUpperCase()}`;
+
+        // Simpan toko beserta kode otomatis.
         const storeResult = await client.query(
             `
             INSERT INTO stores (
+                id,
                 name,
                 code,
                 address,
@@ -196,7 +203,7 @@ async function createStore(ownerId, data, file = null) {
                 owner_id,
                 is_active
             )
-            VALUES ($1, $2, $3, $4, $5, true)
+            VALUES ($1, $2, $3, $4, $5, $6, true)
             RETURNING
                 id,
                 name,
@@ -210,6 +217,7 @@ async function createStore(ownerId, data, file = null) {
                 updated_at
             `,
             [
+                storeId,
                 name,
                 code,
                 address || null,
@@ -220,7 +228,7 @@ async function createStore(ownerId, data, file = null) {
 
         let store = storeResult.rows[0];
 
-        // Foto bersifat opsional.
+        // Upload foto toko jika tersedia.
         if (file) {
             uploadedImage = await uploadImage(
                 file,
@@ -257,7 +265,7 @@ async function createStore(ownerId, data, file = null) {
             store = imageResult.rows[0];
         }
 
-        // Hubungkan pemilik dengan toko.
+        // Hubungkan Owner dengan toko.
         await client.query(
             `
             INSERT INTO store_users (
@@ -287,7 +295,7 @@ async function createStore(ownerId, data, file = null) {
             }
         }
 
-        // Bersihkan file apabila operasi database gagal.
+        // Hapus foto jika proses penyimpanan gagal.
         if (uploadedImage) {
             await deleteStorageImage(
                 uploadedImage.filePath
@@ -308,7 +316,7 @@ async function updateStore(
     data,
     file = null
 ) {
-    const { name, code, address, phone } = data;
+    const { name, address, phone } = data;
 
     const access = await ownerHasStore(
         ownerId,
@@ -347,14 +355,13 @@ async function updateStore(
             UPDATE stores
             SET
                 name = $1,
-                code = $2,
-                address = $3,
-                phone = $4,
-                image_url = COALESCE($5, image_url),
+                address = $2,
+                phone = $3,
+                image_url = COALESCE($4, image_url),
                 updated_at = NOW()
-            WHERE id = $6
-              AND owner_id = $7
-              AND is_active = true
+            WHERE id = $5
+            AND owner_id = $6
+            AND is_active = true
             RETURNING
                 id,
                 name,
@@ -369,7 +376,6 @@ async function updateStore(
             `,
             [
                 name,
-                code,
                 address || null,
                 phone || null,
                 uploadedImage
@@ -439,7 +445,6 @@ async function uploadStoreImage(
         storeId,
         {
             name: store.name,
-            code: store.code,
             address: store.address,
             phone: store.phone,
         },
