@@ -27,39 +27,27 @@ async function getMyStores(req, res, next) {
     }
 }
 
+
 async function createStore(req, res, next) {
     try {
-        const name = normalizeOptionalText(
-            req.body.name
-        );
+        const name = normalizeOptionalText(req.body.name);
 
-        const code = normalizeOptionalText(
-            req.body.code
-        );
-
-        if (!name || !code) {
+        if (!name) {
             return res.status(400).json({
                 success: false,
-                message:
-                    "Nama toko dan kode toko wajib diisi",
+                message: "Nama toko wajib diisi",
             });
         }
 
-        const store =
-            await storeService.createStore(
-                req.user.user_id,
-                {
-                    name,
-                    code,
-                    address: normalizeOptionalText(
-                        req.body.address
-                    ),
-                    phone: normalizeOptionalText(
-                        req.body.phone
-                    ),
-                },
-                req.file || null
-            );
+        const store = await storeService.createStore(
+            req.user.user_id,
+            {
+                name,
+                address: normalizeOptionalText(req.body.address),
+                phone: normalizeOptionalText(req.body.phone),
+            },
+            req.file || null
+        );
 
         return res.status(201).json({
             success: true,
@@ -73,13 +61,7 @@ async function createStore(req, res, next) {
 
 async function updateStore(req, res, next) {
     try {
-        const name = normalizeOptionalText(
-            req.body.name
-        );
-
-        const code = normalizeOptionalText(
-            req.body.code
-        );
+        const name = normalizeOptionalText(req.body.name);
 
         if (!name) {
             return res.status(400).json({
@@ -88,29 +70,16 @@ async function updateStore(req, res, next) {
             });
         }
 
-        if (!code) {
-            return res.status(400).json({
-                success: false,
-                message: "Kode toko wajib diisi",
-            });
-        }
-
-        const store =
-            await storeService.updateStore(
-                req.user.user_id,
-                req.params.storeId,
-                {
-                    name,
-                    code,
-                    address: normalizeOptionalText(
-                        req.body.address
-                    ),
-                    phone: normalizeOptionalText(
-                        req.body.phone
-                    ),
-                },
-                req.file || null
-            );
+        const store = await storeService.updateStore(
+            req.user.user_id,
+            req.params.storeId,
+            {
+                name,
+                address: normalizeOptionalText(req.body.address),
+                phone: normalizeOptionalText(req.body.phone),
+            },
+            req.file || null
+        );
 
         return res.status(200).json({
             success: true,
