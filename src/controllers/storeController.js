@@ -1,3 +1,4 @@
+
 const storeModel = require("../models/storeModel");
 const storeService = require("../services/storeService");
 
@@ -12,10 +13,9 @@ function normalizeOptionalText(value) {
 
 async function getMyStores(req, res, next) {
     try {
-        const stores =
-            await storeModel.findStoresByUserId(
-                req.user.user_id
-            );
+        const stores = await storeModel.findStoresByUserId(
+            req.user.user_id
+        );
 
         return res.status(200).json({
             success: true,
@@ -26,7 +26,6 @@ async function getMyStores(req, res, next) {
         return next(error);
     }
 }
-
 
 async function createStore(req, res, next) {
     try {
@@ -100,12 +99,11 @@ async function uploadStoreImage(req, res, next) {
             });
         }
 
-        const store =
-            await storeService.uploadStoreImage(
-                req.user.user_id,
-                req.params.storeId,
-                req.file
-            );
+        const store = await storeService.uploadStoreImage(
+            req.user.user_id,
+            req.params.storeId,
+            req.file
+        );
 
         return res.status(200).json({
             success: true,
@@ -117,9 +115,70 @@ async function uploadStoreImage(req, res, next) {
     }
 }
 
+async function getOpeningCashSetting(req, res, next) {
+    try {
+        const setting = await storeModel.getOpeningCashSetting(
+            req.storeId
+        );
+
+        if (!setting) {
+            return res.status(404).json({
+                success: false,
+                message: "Toko tidak ditemukan",
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "Pengaturan modal awal berhasil diambil",
+            data: setting,
+        });
+    } catch (error) {
+        return next(error);
+    }
+}
+
+async function updateOpeningCashSetting(req, res, next) {
+    try {
+        const { opening_cash_enabled } = req.body;
+
+        if (typeof opening_cash_enabled !== "boolean") {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "opening_cash_enabled harus berupa boolean true atau false",
+            });
+        }
+
+        const setting = await storeModel.updateOpeningCashSetting(
+            req.storeId,
+            opening_cash_enabled
+        );
+
+        if (!setting) {
+            return res.status(404).json({
+                success: false,
+                message: "Toko tidak ditemukan",
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: opening_cash_enabled
+                ? "Fitur modal awal berhasil diaktifkan"
+                : "Fitur modal awal berhasil dinonaktifkan",
+            data: setting,
+        });
+    } catch (error) {
+        return next(error);
+    }
+}
+
 module.exports = {
     getMyStores,
     createStore,
     updateStore,
     uploadStoreImage,
+    getOpeningCashSetting,
+    updateOpeningCashSetting,
 };
