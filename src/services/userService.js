@@ -347,14 +347,9 @@ async function updateMyProfile(userId, data) {
   );
 }
 
-async function uploadProfilePhoto(
-  userId,
-  file
-) {
+async function uploadProfilePhoto(userId, file) {
   if (!file) {
-    const error = new Error(
-      "File foto wajib dipilih"
-    );
+    const error = new Error("File foto wajib dipilih");
     error.statusCode = 400;
     throw error;
   }
@@ -363,40 +358,45 @@ async function uploadProfilePhoto(
 
   if (file.mimetype === "image/png") {
     extension = "png";
-  }
-
-  if (file.mimetype === "image/webp") {
+  } else if (file.mimetype === "image/webp") {
     extension = "webp";
   }
 
   const filePath =
     `profiles/user-${userId}-${Date.now()}.${extension}`;
 
-  const { error: uploadError } =
-    await supabase.storage
-      .from("uploads")
-      .upload(
-        filePath,
-        file.buffer,
-        {
-          contentType: file.mimetype,
-          upsert: false,
-        }
-      );
+  const bucket = supabase.storage.from("profile-images");
+
+  const { error: uploadError } = await bucket.upload(
+    filePath,
+    file.buffer,
+    {
+      contentType: file.mimetype,
+      upsert: false,
+    }
+  );
 
   if (uploadError) {
     throw uploadError;
   }
 
   const { data: publicUrlData } =
-    supabase.storage
-      .from("uploads")
-      .getPublicUrl(filePath);
+    bucket.getPublicUrl(filePath);
 
-  return userModel.updateProfilePhoto(
+  const user = await userModel.updateProfilePhoto(
     userId,
     publicUrlData.publicUrl
   );
+
+  if (!user) {
+    const error = new Error(
+      "Foto berhasil diunggah, tetapi data profil gagal diperbarui"
+    );
+    error.statusCode = 500;
+    throw error;
+  }
+
+  return user;
 }
 
 async function updateManagedUser(
