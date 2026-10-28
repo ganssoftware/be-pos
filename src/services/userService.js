@@ -1,3 +1,4 @@
+
 const bcrypt = require("bcryptjs");
 
 const pool = require("../config/db");
@@ -5,27 +6,14 @@ const supabase = require("../config/supabase");
 const userModel = require("../models/userModel");
 
 async function createOwner(data) {
-  const {
-    username,
-    email,
-    password,
-    full_name,
-  } = data;
+  const { username, email, password, full_name } = data;
 
-  const existingUsername =
-    await userModel.findUserByUsername(username);
-
-  if (existingUsername) {
+  if (await userModel.findUserByUsername(username)) {
     throw new Error("Username sudah digunakan");
   }
 
-  if (email) {
-    const existingEmail =
-      await userModel.findUserByEmail(email);
-
-    if (existingEmail) {
-      throw new Error("Email sudah digunakan");
-    }
+  if (email && await userModel.findUserByEmail(email)) {
+    throw new Error("Email sudah digunakan");
   }
 
   const role = await userModel.findRoleByName("owner");
@@ -45,53 +33,21 @@ async function createOwner(data) {
   });
 }
 
-async function createCashier(ownerId, data) {
-  const {
-    username,
-    email,
-    password,
-    full_name,
-    store_ids,
-  } = data;
+async function createCashier(ownerId, storeId, data) {
+  const { username, email, password, full_name } = data;
 
-  if (!Array.isArray(store_ids) || store_ids.length === 0) {
-    throw new Error(
-      "Minimal satu toko harus dipilih"
-    );
+  if (!storeId) {
+    const error = new Error("Toko aktif wajib dipilih");
+    error.statusCode = 400;
+    throw error;
   }
 
-  const existingUsername =
-    await userModel.findUserByUsername(username);
-
-  if (existingUsername) {
+  if (await userModel.findUserByUsername(username)) {
     throw new Error("Username sudah digunakan");
   }
 
-  if (email) {
-    const existingEmail =
-      await userModel.findUserByEmail(email);
-
-    if (existingEmail) {
-      throw new Error("Email sudah digunakan");
-    }
-  }
-
-  // Pastikan SEMUA toko memang milik owner
-  const storeResult = await pool.query(
-    `
-    SELECT id
-    FROM stores
-    WHERE owner_id = $1
-      AND id = ANY($2::uuid[])
-      AND is_active = true
-    `,
-    [ownerId, store_ids]
-  );
-
-  if (storeResult.rows.length !== store_ids.length) {
-    throw new Error(
-      "Ada toko yang bukan milik Anda atau tidak aktif"
-    );
+  if (email && await userModel.findUserByEmail(email)) {
+    throw new Error("Email sudah digunakan");
   }
 
   const role = await userModel.findRoleByName("cashier");
@@ -102,74 +58,56 @@ async function createCashier(ownerId, data) {
 
   const hashedPassword = await bcrypt.hash(password, 10);
 
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
-
-    const userResult = await client.query(
-      `
-      INSERT INTO users (
-        username,
-        email,
-        password,
-        full_name,
-        role_id,
-        is_active
-      )
-      VALUES ($1, $2, $3, $4, $5, true)
-      RETURNING
-        id,
-        username,
-        email,
-        full_name,
-        role_id,
-        is_active,
-        created_at
-      `,
-      [
-        username,
-        email || null,
-        hashedPassword,
-        full_name,
-        role.id,
-      ]
-    );
-
-    const cashier = userResult.rows[0];
-
-    for (const storeId of store_ids) {
-      await client.query(
-        `
-        INSERT INTO store_users (
-          store_id,
-          user_id
-        )
-        VALUES ($1, $2)
-        ON CONFLICT (store_id, user_id)
-        DO NOTHING
-        `,
-        [storeId, cashier.id]
-      );
-    }
-
-    await client.query("COMMIT");
-
-    return cashier;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  return userModel.createCashierForStore({
+    ownerId,
+    username,
+    email: email || null,
+    password: hashedPassword,
+    fullName: full_name,
+    roleId: role.id,
+    storeId,
+  });
 }
 
 async function getOwners() {
   return userModel.findOwners();
 }
 
-async function getMyCashiers(ownerId) {
-  return userModel.findCashiersByOwnerId(ownerId);
+async function getMyCashiers(ownerId, storeId) {
+  if (!storeId) {
+    const error = new Error("Toko aktif tidak ditemukan");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return userModel.findCashiersByOwnerId(ownerId, storeId);
+}
+
+async function getAvailableCashiers(ownerId, storeId) {
+  if (!storeId) {
+    const error = new Error("Toko tujuan tidak ditemukan");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return userModel.findAvailableInactiveCashiersByOwnerId(
+    ownerId,
+    storeId
+  );
+}
+
+async function moveCashier(ownerId, cashierId, targetStoreId) {
+  if (!targetStoreId) {
+    const error = new Error("Toko tujuan wajib dipilih");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return userModel.moveInactiveCashierToStore(
+    ownerId,
+    cashierId,
+    targetStoreId
+  );
 }
 
 async function getAllUsers() {
@@ -182,60 +120,44 @@ async function updateUserStatus(
   targetUserId,
   isActive
 ) {
-  const targetUser =
-    await userModel.findUserById(targetUserId);
+  const targetUser = await userModel.findUserById(targetUserId);
 
   if (!targetUser) {
-    throw new Error("User tidak ditemukan");
+    const error = new Error("User tidak ditemukan");
+    error.statusCode = 404;
+    throw error;
   }
 
   if (currentUserRole === "super-admin") {
-    return userModel.setUserActive(
-      targetUserId,
-      isActive
-    );
+    return userModel.setUserActive(targetUserId, isActive);
   }
 
   if (currentUserRole === "owner") {
-    // Owner hanya boleh mengelola cashier
     if (targetUser.role_name !== "cashier") {
-      throw new Error(
-        "Owner hanya dapat mengelola kasir"
-      );
+      const error = new Error("Owner hanya dapat mengelola kasir");
+      error.statusCode = 403;
+      throw error;
     }
 
-    const result = await pool.query(
-      `
-      SELECT 1
-      FROM store_users su
-      INNER JOIN stores s
-        ON s.id = su.store_id
-      WHERE su.user_id = $1
-        AND s.owner_id = $2
-        AND s.is_active = true
-      LIMIT 1
-      `,
-      [
-        targetUserId,
-        currentUserId,
-      ]
+    const hasAccess = await userModel.ownerHasCashier(
+      currentUserId,
+      targetUserId
     );
 
-    if (result.rowCount === 0) {
-      throw new Error(
+    if (!hasAccess) {
+      const error = new Error(
         "Anda tidak memiliki akses untuk mengelola kasir ini"
       );
+      error.statusCode = 403;
+      throw error;
     }
-
-    return userModel.setUserActive(
-      targetUserId,
-      isActive
-    );
+    
+    return userModel.setUserActive(targetUserId, isActive);
   }
 
-  throw new Error(
-    "Anda tidak memiliki akses"
-  );
+  const error = new Error("Anda tidak memiliki akses");
+  error.statusCode = 403;
+  throw error;
 }
 
 async function updateMyProfile(userId, data) {
@@ -254,23 +176,14 @@ async function updateMyProfile(userId, data) {
     throw error;
   }
 
-  const existingEmail =
-    await userModel.findUserByEmail(email);
+  const existingEmail = await userModel.findUserByEmail(email);
 
-  if (
-    existingEmail &&
-    existingEmail.id !== userId
-  ) {
-    const error = new Error(
-      "Email sudah digunakan"
-    );
+  if (existingEmail && existingEmail.id !== userId) {
+    const error = new Error("Email sudah digunakan");
     error.statusCode = 409;
     throw error;
   }
 
-  let hashedPassword = null;
-
-  // PASSWORD TIDAK DIUBAH
   if (!new_password || !new_password.trim()) {
     return userModel.updateUserProfile(
       userId,
@@ -280,11 +193,8 @@ async function updateMyProfile(userId, data) {
     );
   }
 
-  // PASSWORD DIUBAH
   if (!current_password) {
-    const error = new Error(
-      "Password lama wajib diisi"
-    );
+    const error = new Error("Password lama wajib diisi");
     error.statusCode = 400;
     throw error;
   }
@@ -295,9 +205,7 @@ async function updateMyProfile(userId, data) {
   );
 
   if (!passwordMatch) {
-    const error = new Error(
-      "Password lama salah"
-    );
+    const error = new Error("Password lama salah");
     error.statusCode = 400;
     throw error;
   }
@@ -311,9 +219,7 @@ async function updateMyProfile(userId, data) {
   }
 
   if (new_password.length < 6) {
-    const error = new Error(
-      "Password minimal 6 karakter"
-    );
+    const error = new Error("Password minimal 6 karakter");
     error.statusCode = 400;
     throw error;
   }
@@ -334,10 +240,7 @@ async function updateMyProfile(userId, data) {
     throw error;
   }
 
-  hashedPassword = await bcrypt.hash(
-    new_password,
-    12
-  );
+  const hashedPassword = await bcrypt.hash(new_password, 12);
 
   return userModel.updateUserProfile(
     userId,
@@ -380,8 +283,7 @@ async function uploadProfilePhoto(userId, file) {
     throw uploadError;
   }
 
-  const { data: publicUrlData } =
-    bucket.getPublicUrl(filePath);
+  const { data: publicUrlData } = bucket.getPublicUrl(filePath);
 
   const user = await userModel.updateProfilePhoto(
     userId,
@@ -399,32 +301,18 @@ async function uploadProfilePhoto(userId, file) {
   return user;
 }
 
-async function updateManagedUser(
-  actorId,
-  targetUserId,
-  data
-) {
-  const {
-    full_name,
-    email,
-    new_password,
-  } = data;
+async function updateManagedUser(actorId, targetUserId, data) {
+  const { full_name, email, new_password } = data;
 
-  const actor =
-    await userModel.findUserById(actorId);
-
-  const target =
-    await userModel.findUserById(targetUserId);
+  const actor = await userModel.findUserById(actorId);
+  const target = await userModel.findUserById(targetUserId);
 
   if (!actor || !target) {
-    const error = new Error(
-      "User tidak ditemukan"
-    );
+    const error = new Error("User tidak ditemukan");
     error.statusCode = 404;
     throw error;
   }
 
-  // SUPER ADMIN
   if (actor.role_name === "super-admin") {
     if (target.role_name !== "owner") {
       const error = new Error(
@@ -433,23 +321,17 @@ async function updateManagedUser(
       error.statusCode = 403;
       throw error;
     }
-  }
-
-  // OWNER
-  else if (actor.role_name === "owner") {
+  } else if (actor.role_name === "owner") {
     if (target.role_name !== "cashier") {
-      const error = new Error(
-        "Owner hanya dapat mengedit cashier"
-      );
+      const error = new Error("Owner hanya dapat mengedit cashier");
       error.statusCode = 403;
       throw error;
     }
 
-    const hasAccess =
-      await userModel.ownerHasCashier(
-        actorId,
-        targetUserId
-      );
+    const hasAccess = await userModel.ownerHasCashier(
+      actorId,
+      targetUserId
+    );
 
     if (!hasAccess) {
       const error = new Error(
@@ -458,39 +340,25 @@ async function updateManagedUser(
       error.statusCode = 403;
       throw error;
     }
-  }
-
-  // CASHIER
-  else {
-    const error = new Error(
-      "Anda tidak memiliki akses"
-    );
+  } else {
+    const error = new Error("Anda tidak memiliki akses");
     error.statusCode = 403;
     throw error;
   }
 
-  const existingEmail =
-    await userModel.findUserByEmail(email);
+  const existingEmail = await userModel.findUserByEmail(email);
 
-  if (
-    existingEmail &&
-    existingEmail.id !== targetUserId
-  ) {
-    const error = new Error(
-      "Email sudah digunakan"
-    );
+  if (existingEmail && existingEmail.id !== targetUserId) {
+    const error = new Error("Email sudah digunakan");
     error.statusCode = 409;
     throw error;
   }
 
   let hashedPassword = null;
 
-  // Password opsional
   if (new_password && new_password.trim()) {
     if (new_password.length < 6) {
-      const error = new Error(
-        "Password minimal 6 karakter"
-      );
+      const error = new Error("Password minimal 6 karakter");
       error.statusCode = 400;
       throw error;
     }
@@ -511,10 +379,7 @@ async function updateManagedUser(
       throw error;
     }
 
-    hashedPassword = await bcrypt.hash(
-      new_password,
-      12
-    );
+    hashedPassword = await bcrypt.hash(new_password, 12);
   }
 
   return userModel.updateManagedUser(
@@ -530,6 +395,8 @@ module.exports = {
   createCashier,
   getOwners,
   getMyCashiers,
+  getAvailableCashiers,
+  moveCashier,
   getAllUsers,
   updateUserStatus,
   updateMyProfile,

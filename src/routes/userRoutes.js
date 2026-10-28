@@ -1,17 +1,16 @@
+
 const express = require("express");
 const router = express.Router();
 
 const authMiddleware = require("../middleware/authMiddleware");
 const roleMiddleware = require("../middleware/roleMiddleware");
+const storeMiddleware = require("../middleware/storeMiddleware");
 const upload = require("../middleware/uploadImage");
 const userController = require("../controllers/userController");
 
 router.use(authMiddleware);
 
-router.put(
-  "/me",
-  userController.updateMyProfile
-);
+router.put("/me", userController.updateMyProfile);
 
 router.post(
   "/me/photo",
@@ -34,12 +33,28 @@ router.get(
 router.post(
   "/cashiers",
   roleMiddleware("owner"),
+  storeMiddleware,
   userController.createCashier
+);
+
+router.get(
+  "/cashiers/available",
+  roleMiddleware("owner"),
+  storeMiddleware,
+  userController.getAvailableCashiers
+);
+
+router.post(
+  "/cashiers/:cashierId/move",
+  roleMiddleware("owner"),
+  storeMiddleware,
+  userController.moveCashier
 );
 
 router.get(
   "/cashiers",
   roleMiddleware("owner"),
+  storeMiddleware,
   userController.getMyCashiers
 );
 

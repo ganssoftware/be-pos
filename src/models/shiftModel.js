@@ -1,4 +1,3 @@
-
 const pool = require("../config/db");
 
 async function findCurrentByUserId(userId, storeId) {
@@ -7,6 +6,7 @@ async function findCurrentByUserId(userId, storeId) {
             s.id,
             s.store_id,
             s.user_id,
+            s.schedule_id,
             CASE
                 WHEN st.opening_cash_enabled THEN s.opening_cash
                 ELSE NULL
@@ -19,7 +19,8 @@ async function findCurrentByUserId(userId, storeId) {
             s.closed_at,
             st.opening_cash_enabled
         FROM shifts s
-        INNER JOIN stores st ON st.id = s.store_id
+        INNER JOIN stores st
+            ON st.id = s.store_id
         WHERE s.user_id = $1
           AND s.store_id = $2
           AND s.status = 'OPEN'
@@ -52,22 +53,37 @@ async function findById(id, storeId) {
             u.username,
             u.full_name
         FROM shifts s
-        INNER JOIN users u ON u.id = s.user_id
-        INNER JOIN stores st ON st.id = s.store_id
+        INNER JOIN users u
+            ON u.id = s.user_id
+        INNER JOIN stores st
+            ON st.id = s.store_id
         WHERE s.id = $1
           AND s.store_id = $2
         LIMIT 1
     `;
 
     const result = await pool.query(query, [id, storeId]);
+
     return result.rows[0] || null;
 }
 
 async function findAll(
     storeId,
-    { page = 1, limit = 20, status = "", userId = "" } = {}
+    {
+        page = 1,
+        limit = 20,
+        status = "",
+        userId = "",
+    } = {}
 ) {
-    const offset = (page - 1) * limit;
+    const safePage = Math.max(1, Number(page) || 1);
+    const safeLimit = Math.min(
+        100,
+        Math.max(1, Number(limit) || 20)
+    );
+
+    const offset = (safePage - 1) * safeLimit;
+
     const conditions = ["s.store_id = $1"];
     const values = [storeId];
 
@@ -94,7 +110,8 @@ async function findAll(
 
     const total = Number(countResult.rows[0].total);
 
-    const dataValues = [...values, limit, offset];
+    const dataValues = [...values, safeLimit, offset];
+
     const limitParam = `$${values.length + 1}`;
     const offsetParam = `$${values.length + 2}`;
 
@@ -119,10 +136,14 @@ async function findAll(
             u.username,
             u.full_name
         FROM shifts s
-        INNER JOIN users u ON u.id = s.user_id
-        INNER JOIN stores st ON st.id = s.store_id
+        INNER JOIN users u
+            ON u.id = s.user_id
+        INNER JOIN stores st
+            ON st.id = s.store_id
         WHERE ${whereClause}
-        ORDER BY s.opened_at DESC
+        ORDER BY
+            s.opened_at DESC NULLS LAST,
+            s.created_at DESC
         LIMIT ${limitParam}
         OFFSET ${offsetParam}
         `,
@@ -132,15 +153,19 @@ async function findAll(
     return {
         data: dataResult.rows,
         pagination: {
-            page,
-            limit,
+            page: safePage,
+            limit: safeLimit,
             total,
-            total_pages: Math.ceil(total / limit),
+            total_pages: Math.ceil(total / safeLimit),
         },
     };
 }
 
-async function create({ storeId, userId, openingCash }) {
+async function create({
+    storeId,
+    userId,
+    openingCash = 0,
+}) {
     const result = await pool.query(
         `
         INSERT INTO shifts (
@@ -209,6 +234,7 @@ async function findOpenForUpdate(client, userId, storeId) {
             id,
             store_id,
             user_id,
+            schedule_id,
             opening_cash,
             expected_cash,
             closing_cash,
@@ -234,10 +260,12 @@ async function increaseExpectedCash(client, shiftId, amount) {
     const result = await client.query(
         `
         UPDATE shifts
-        SET expected_cash = expected_cash + $1
+        SET
+            expected_cash = expected_cash + $1,
+            updated_at = NOW()
         WHERE id = $2
           AND status = 'OPEN'
-        RETURNING id, expected_cash
+        RETURNING id, expected_cash, status
         `,
         [amount, shiftId]
     );
@@ -252,6 +280,7 @@ async function findByIdForUpdate(client, id, storeId) {
             id,
             store_id,
             user_id,
+            schedule_id,
             opening_cash,
             expected_cash,
             closing_cash,
@@ -275,11 +304,13 @@ async function decreaseExpectedCash(client, shiftId, amount) {
     const result = await client.query(
         `
         UPDATE shifts
-        SET expected_cash = expected_cash - $1
+        SET
+            expected_cash = expected_cash - $1,
+            updated_at = NOW()
         WHERE id = $2
           AND status = 'OPEN'
           AND expected_cash >= $1
-        RETURNING id, expected_cash
+        RETURNING id, expected_cash, status
         `,
         [amount, shiftId]
     );
@@ -287,7 +318,103 @@ async function decreaseExpectedCash(client, shiftId, amount) {
     return result.rows[0] || null;
 }
 
-async function openFromSchedule({ scheduleId, storeId, userId }) {
+async function findAllByStoreForOwner(client, storeId) {
+    const result = await client.query(
+        `
+        SELECT
+            s.id,
+            s.store_id,
+            s.user_id,
+            s.schedule_id,
+            CASE
+                WHEN st.opening_cash_enabled THEN s.opening_cash
+                ELSE NULL
+            END AS opening_cash,
+            s.expected_cash,
+            s.closing_cash,
+            s.difference,
+            s.status,
+            s.opened_at,
+            s.closed_at,
+            st.opening_cash_enabled,
+            u.username,
+            u.full_name,
+            ss.shift_name AS schedule_shift_name,
+            ss.start_time,
+            ss.end_time
+        FROM shifts s
+        INNER JOIN stores st
+            ON st.id = s.store_id
+        INNER JOIN users u
+            ON u.id = s.user_id
+        LEFT JOIN shift_schedules ss
+            ON ss.id = s.schedule_id
+        WHERE s.store_id = $1
+        ORDER BY
+            CASE
+                WHEN s.status = 'OPEN' THEN 0
+                ELSE 1
+            END,
+            s.opened_at DESC NULLS LAST,
+            s.created_at DESC
+        FOR UPDATE OF s
+        `,
+        [storeId]
+    );
+
+    return result.rows;
+}
+
+async function findByIdForStoreForUpdate(
+    client,
+    shiftId,
+    storeId
+) {
+    const result = await client.query(
+        `
+        SELECT
+            s.id,
+            s.store_id,
+            s.user_id,
+            s.schedule_id,
+            CASE
+                WHEN st.opening_cash_enabled THEN s.opening_cash
+                ELSE NULL
+            END AS opening_cash,
+            s.expected_cash,
+            s.closing_cash,
+            s.difference,
+            s.status,
+            s.opened_at,
+            s.closed_at,
+            st.opening_cash_enabled,
+            u.username,
+            u.full_name,
+            ss.shift_name AS schedule_shift_name,
+            ss.start_time,
+            ss.end_time
+        FROM shifts s
+        INNER JOIN stores st
+            ON st.id = s.store_id
+        INNER JOIN users u
+            ON u.id = s.user_id
+        LEFT JOIN shift_schedules ss
+            ON ss.id = s.schedule_id
+        WHERE s.id = $1
+          AND s.store_id = $2
+        FOR UPDATE OF s
+        `,
+        [shiftId, storeId]
+    );
+
+    return result.rows[0] || null;
+}
+
+async function openFromSchedule({
+    scheduleId,
+    storeId,
+    userId,
+}) {
     const client = await pool.connect();
 
     try {
@@ -308,7 +435,8 @@ async function openFromSchedule({ scheduleId, storeId, userId }) {
                     < ss.start_time
                 ) AS is_before_start
             FROM shift_schedules ss
-            INNER JOIN stores st ON st.id = ss.store_id
+            INNER JOIN stores st
+                ON st.id = ss.store_id
             WHERE ss.id = $1
               AND ss.store_id = $2
               AND ss.user_id = $3
@@ -364,9 +492,11 @@ async function openFromSchedule({ scheduleId, storeId, userId }) {
             throw error;
         }
 
-        const openingCashEnabled = schedule.opening_cash_enabled === true;
+        const openingCashEnabled =
+            schedule.opening_cash_enabled === true;
+
         const openingCash = openingCashEnabled
-            ? Number(schedule.opening_cash)
+            ? Number(schedule.opening_cash || 0)
             : 0;
 
         const shiftResult = await client.query(
@@ -394,7 +524,12 @@ async function openFromSchedule({ scheduleId, storeId, userId }) {
                 opened_at,
                 closed_at
             `,
-            [storeId, userId, schedule.id, openingCash]
+            [
+                storeId,
+                userId,
+                schedule.id,
+                openingCash,
+            ]
         );
 
         await client.query("COMMIT");
@@ -412,7 +547,10 @@ async function openFromSchedule({ scheduleId, storeId, userId }) {
         try {
             await client.query("ROLLBACK");
         } catch (rollbackError) {
-            console.error("Rollback openFromSchedule gagal:", rollbackError);
+            console.error(
+                "Rollback openFromSchedule gagal:",
+                rollbackError
+            );
         }
 
         throw error;
@@ -431,5 +569,7 @@ module.exports = {
     increaseExpectedCash,
     findByIdForUpdate,
     decreaseExpectedCash,
+    findAllByStoreForOwner,
+    findByIdForStoreForUpdate,
     openFromSchedule,
 };

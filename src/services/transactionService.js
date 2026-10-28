@@ -16,6 +16,20 @@ const ALLOWED_PAYMENT_METHODS = [
   "E_WALLET",
 ];
 
+function normalizeRole(role) {
+  if (typeof role === "string") {
+    return role.trim().toLowerCase();
+  }
+
+  if (role && typeof role === "object") {
+    return String(role.name || "")
+      .trim()
+      .toLowerCase();
+  }
+
+  return "";
+}
+
 function parseMoney(value) {
   const number = Number(value);
 
@@ -50,23 +64,27 @@ function generateTransactionNumber() {
   return `TRX-${timestamp}-${random}`;
 }
 
-async function checkout({
+function createError(message, statusCode = 400) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+async function resolveCheckoutShift({
+  client,
   storeId,
   userId,
-  customerId,
-  items,
-  discount,
-  tax,
-  payments,
+  role,
+  shiftId,
+  outsideShift,
 }) {
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
-
-    // --------------------------------------------------
-    // 1. Pastikan user memiliki shift OPEN
-    // --------------------------------------------------
+  if (role === "cashier" || role === "kasir") {
+    if (shiftId || outsideShift) {
+      throw createError(
+        "Kasir wajib menggunakan shift aktif miliknya sendiri",
+        403
+      );
+    }
 
     const shift = await shiftModel.findOpenForUpdate(
       client,
@@ -75,24 +93,120 @@ async function checkout({
     );
 
     if (!shift) {
-      throw new Error(
-        "Anda belum memiliki shift yang terbuka"
+      throw createError(
+        "Anda belum memiliki shift yang terbuka",
+        409
       );
     }
 
-    // --------------------------------------------------
-    // 2. Validasi item
-    // --------------------------------------------------
+    return shift;
+  }
+
+  if (role !== "owner") {
+    throw createError(
+      "Anda tidak memiliki akses untuk melakukan transaksi",
+      403
+    );
+  }
+
+  if (outsideShift === true) {
+    if (shiftId) {
+      throw createError(
+        "Pilih shift atau transaksi di luar shift, bukan keduanya"
+      );
+    }
+
+    return null;
+  }
+
+  if (shiftId) {
+    const shift =
+      await shiftModel.findByIdForStoreForUpdate(
+        client,
+        shiftId,
+        storeId
+      );
+
+    if (!shift) {
+      throw createError(
+        "Shift yang dipilih tidak ditemukan pada toko ini",
+        404
+      );
+    }
+
+    if (!["OPEN", "CLOSED"].includes(shift.status)) {
+      throw createError(
+        "Status shift yang dipilih tidak valid"
+      );
+    }
+
+    return shift;
+  }
+
+  const allShifts =
+    await shiftModel.findAllByStoreForOwner(
+      client,
+      storeId
+    );
+
+  const openShifts = allShifts.filter(
+    (shift) => shift.status === "OPEN"
+  );
+
+  if (openShifts.length > 1) {
+    throw createError(
+      "Terdapat beberapa shift aktif. Pilih shift yang ingin digunakan atau pilih transaksi di luar shift.",
+      409
+    );
+  }
+
+  if (openShifts.length === 1) {
+    return openShifts[0];
+  }
+
+  return null;
+}
+
+async function checkout({
+  storeId,
+  userId,
+  role,
+  customerId,
+  items,
+  discount,
+  tax,
+  payments,
+  shiftId = null,
+  outsideShift = false,
+}) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    role = normalizeRole(role);
+
+    if (!["owner", "cashier", "kasir"].includes(role)) {
+      throw createError(
+        "Anda tidak memiliki akses untuk melakukan transaksi",
+        403
+      );
+    }
+
+    const shift = await resolveCheckoutShift({
+      client,
+      storeId,
+      userId,
+      role,
+      shiftId,
+      outsideShift,
+    });
 
     if (!Array.isArray(items) || items.length === 0) {
-      throw new Error(
+      throw createError(
         "Minimal terdapat satu produk dalam transaksi"
       );
     }
-
-    // --------------------------------------------------
-    // 3. Hitung item berdasarkan harga dari database
-    // --------------------------------------------------
 
     const processedItems = [];
 
@@ -110,15 +224,15 @@ async function checkout({
       );
 
       if (!productId) {
-        throw new Error("Product ID wajib diisi");
+        throw createError("Product ID wajib diisi");
       }
 
       if (quantity === null) {
-        throw new Error("Quantity produk tidak valid");
+        throw createError("Quantity produk tidak valid");
       }
 
       if (itemDiscount === null) {
-        throw new Error("Discount item tidak valid");
+        throw createError("Discount item tidak valid");
       }
 
       const product =
@@ -129,11 +243,11 @@ async function checkout({
         );
 
       if (!product) {
-        throw new Error("Produk tidak ditemukan");
+        throw createError("Produk tidak ditemukan", 404);
       }
 
       if (!product.is_active) {
-        throw new Error(
+        throw createError(
           `Produk "${product.name}" tidak aktif`
         );
       }
@@ -146,7 +260,7 @@ async function checkout({
         );
 
       if (!inventory) {
-        throw new Error(
+        throw createError(
           `Inventory produk "${product.name}" tidak ditemukan`
         );
       }
@@ -154,7 +268,7 @@ async function checkout({
       const stock = Number(inventory.quantity);
 
       if (stock < quantity) {
-        throw new Error(
+        throw createError(
           `Stok "${product.name}" tidak mencukupi. Stok tersedia: ${stock}`
         );
       }
@@ -163,7 +277,7 @@ async function checkout({
       const costPrice = Number(product.purchase_price);
 
       if (!Number.isFinite(price) || price < 0) {
-        throw new Error(
+        throw createError(
           `Harga jual produk "${product.name}" tidak valid`
         );
       }
@@ -172,7 +286,7 @@ async function checkout({
         !Number.isFinite(costPrice) ||
         costPrice < 0
       ) {
-        throw new Error(
+        throw createError(
           `Harga beli produk "${product.name}" tidak valid`
         );
       }
@@ -181,7 +295,7 @@ async function checkout({
         price * quantity - itemDiscount;
 
       if (itemSubtotal < 0) {
-        throw new Error(
+        throw createError(
           `Discount produk "${product.name}" tidak valid`
         );
       }
@@ -199,10 +313,6 @@ async function checkout({
       });
     }
 
-    // --------------------------------------------------
-    // 4. Transaction discount + tax
-    // --------------------------------------------------
-
     const transactionDiscount = parseMoney(
       discount ?? 0
     );
@@ -212,17 +322,17 @@ async function checkout({
     );
 
     if (transactionDiscount === null) {
-      throw new Error(
+      throw createError(
         "Transaction discount tidak valid"
       );
     }
 
     if (transactionTax === null) {
-      throw new Error("Tax tidak valid");
+      throw createError("Tax tidak valid");
     }
 
     if (transactionDiscount > subtotal) {
-      throw new Error(
+      throw createError(
         "Discount transaksi tidak boleh melebihi subtotal"
       );
     }
@@ -232,19 +342,15 @@ async function checkout({
       transactionDiscount +
       transactionTax;
 
-    if (total < 0) {
-      throw new Error("Total transaksi tidak valid");
+    if (!Number.isFinite(total) || total < 0) {
+      throw createError("Total transaksi tidak valid");
     }
-
-    // --------------------------------------------------
-    // 5. Validasi payment
-    // --------------------------------------------------
 
     if (
       !Array.isArray(payments) ||
       payments.length === 0
     ) {
-      throw new Error(
+      throw createError(
         "Minimal terdapat satu pembayaran"
       );
     }
@@ -264,42 +370,42 @@ async function checkout({
       );
 
       if (!ALLOWED_PAYMENT_METHODS.includes(method)) {
-        throw new Error(
+        throw createError(
           `Metode pembayaran "${method}" tidak valid`
         );
       }
 
       if (amount === null) {
-        throw new Error("Nominal pembayaran tidak valid");
+        throw createError(
+          "Nominal pembayaran tidak valid"
+        );
       }
 
       let amountReceived;
 
-      // CASH
       if (method === "CASH") {
         amountReceived = parsePositiveNumber(
           payment.amount_received
         );
 
         if (amountReceived === null) {
-          throw new Error(
+          throw createError(
             "Uang diterima untuk CASH wajib diisi"
           );
         }
 
         if (amountReceived < amount) {
-          throw new Error(
+          throw createError(
             "Uang CASH yang diterima kurang dari nominal pembayaran"
           );
         }
       } else {
-        // NON-CASH
         amountReceived = parsePositiveNumber(
           payment.amount_received ?? amount
         );
 
         if (amountReceived === null) {
-          throw new Error(
+          throw createError(
             "Nominal pembayaran tidak valid"
           );
         }
@@ -309,7 +415,7 @@ async function checkout({
             (amountReceived - amount).toFixed(2)
           ) !== 0
         ) {
-          throw new Error(
+          throw createError(
             `Metode ${method} tidak dapat menerima pembayaran melebihi nominal transaksi`
           );
         }
@@ -343,19 +449,15 @@ async function checkout({
     );
 
     if (paymentDifference !== 0) {
-      throw new Error(
+      throw createError(
         "Total pembayaran harus sama dengan total transaksi"
       );
     }
 
-    // --------------------------------------------------
-    // 6. Buat transaksi
-    // --------------------------------------------------
-
     const transaction =
       await transactionModel.create(client, {
         storeId,
-        shiftId: shift.id,
+        shiftId: shift ? shift.id : null,
         userId,
         customerId,
         transactionNumber: generateTransactionNumber(),
@@ -364,10 +466,6 @@ async function checkout({
         tax: transactionTax,
         total,
       });
-
-    // --------------------------------------------------
-    // 7. Buat transaction items + OUT stock
-    // --------------------------------------------------
 
     const createdItems = [];
 
@@ -380,7 +478,7 @@ async function checkout({
         );
 
       if (!updatedInventory) {
-        throw new Error(
+        throw createError(
           `Stok "${item.product.name}" tidak mencukupi`
         );
       }
@@ -413,10 +511,6 @@ async function checkout({
       createdItems.push(transactionItem);
     }
 
-    // --------------------------------------------------
-    // 8. Simpan payment
-    // --------------------------------------------------
-
     const createdPayments = [];
 
     for (const payment of processedPayments) {
@@ -433,12 +527,14 @@ async function checkout({
       createdPayments.push(createdPayment);
     }
 
-    // --------------------------------------------------
-    // 9. CASH → tambah expected_cash
-    // --------------------------------------------------
+    let updatedShift = shift;
 
-    if (cashExpectedCash > 0) {
-      const updatedShift =
+    if (
+      shift &&
+      shift.status === "OPEN" &&
+      cashExpectedCash > 0
+    ) {
+      updatedShift =
         await shiftModel.increaseExpectedCash(
           client,
           shift.id,
@@ -446,30 +542,284 @@ async function checkout({
         );
 
       if (!updatedShift) {
-        throw new Error("Shift sudah tidak aktif");
+        throw createError(
+          "Saldo kas shift gagal diperbarui. Silakan ulangi transaksi."
+        );
       }
     }
 
-    // --------------------------------------------------
-    // 10. Commit
-    // --------------------------------------------------
-
     await client.query("COMMIT");
+
+    const shiftCashChanged =
+      Boolean(shift) &&
+      shift.status === "OPEN" &&
+      cashExpectedCash > 0;
 
     return {
       transaction,
       items: createdItems,
       payments: createdPayments,
-      shift: {
-        id: shift.id,
-        cash_payment: cashExpectedCash,
-        expected_cash:
-          Number(shift.expected_cash) +
-          cashExpectedCash,
-      },
+
+      shift: shift
+        ? {
+            id: shift.id,
+            status: shift.status,
+            cash_payment:
+              shift.status === "OPEN"
+                ? cashExpectedCash
+                : 0,
+            expected_cash: Number(
+              shiftCashChanged
+                ? updatedShift.expected_cash
+                : shift.expected_cash
+            ),
+            cash_updated: shiftCashChanged,
+          }
+        : null,
+
+      outside_shift: !shift,
     };
   } catch (error) {
-    await client.query("ROLLBACK");
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      console.error(
+        "Rollback checkout gagal:",
+        rollbackError
+      );
+    }
+
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function reverseTransaction({
+  transactionId,
+  storeId,
+  userId,
+  role,
+  targetStatus,
+}) {
+  const client = await pool.connect();
+
+  const isVoid = targetStatus === "VOID";
+  const actionLabel = isVoid ? "void" : "refund";
+  const movementType = isVoid ? "VOID" : "REFUND";
+
+  try {
+    await client.query("BEGIN");
+
+    role = normalizeRole(role);
+
+    const transaction =
+      await transactionModel.findByIdForUpdate(
+        client,
+        transactionId,
+        storeId
+      );
+
+    if (!transaction) {
+      throw createError(
+        "Transaksi tidak ditemukan",
+        404
+      );
+    }
+
+    if (transaction.status !== "COMPLETED") {
+      throw createError(
+        `Transaksi tidak dapat di-${actionLabel} karena status saat ini ${transaction.status}`
+      );
+    }
+
+    if (
+      role !== "owner" &&
+      transaction.user_id !== userId
+    ) {
+      throw createError(
+        `Anda tidak memiliki akses untuk melakukan ${actionLabel} transaksi ini`,
+        403
+      );
+    }
+
+    let shift = null;
+
+    if (transaction.shift_id) {
+      shift = await shiftModel.findByIdForUpdate(
+        client,
+        transaction.shift_id,
+        storeId
+      );
+
+      if (!shift) {
+        throw createError(
+          "Shift transaksi tidak ditemukan",
+          404
+        );
+      }
+    }
+
+    const items =
+      await transactionModel.findItemsByTransactionIdForUpdate(
+        client,
+        transaction.id
+      );
+
+    if (!items.length) {
+      throw createError(
+        "Item transaksi tidak ditemukan"
+      );
+    }
+
+    const payments =
+      await paymentModel.findByTransactionIdForUpdate(
+        client,
+        transaction.id
+      );
+
+    const restoredItems = [];
+
+    for (const item of items) {
+      if (!item.product_id) {
+        throw createError(
+          `Produk pada item "${item.product_name}" tidak ditemukan`
+        );
+      }
+
+      const inventory =
+        await inventoryModel.getInventoryForUpdate(
+          client,
+          item.product_id,
+          storeId
+        );
+
+      if (!inventory) {
+        throw createError(
+          `Inventory untuk produk "${item.product_name}" tidak ditemukan`
+        );
+      }
+
+      const quantity = Number(item.quantity);
+
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        throw createError(
+          `Quantity item "${item.product_name}" tidak valid`
+        );
+      }
+
+      const updatedInventory =
+        await inventoryModel.increaseStock(
+          client,
+          inventory.id,
+          quantity
+        );
+
+      if (!updatedInventory) {
+        throw createError(
+          `Gagal mengembalikan stok produk "${item.product_name}"`
+        );
+      }
+
+      const movement =
+        await inventoryModel.createMovement(client, {
+          storeId,
+          productId: item.product_id,
+          type: "IN",
+          quantity,
+          referenceType: movementType,
+          referenceId: transaction.id,
+          notes:
+            `Pengembalian stok karena ${actionLabel} ${transaction.transaction_number}`,
+          createdBy: userId,
+        });
+
+      restoredItems.push({
+        product_id: item.product_id,
+        product_name: item.product_name,
+        quantity,
+        inventory: updatedInventory,
+        movement,
+      });
+    }
+
+    const cashPayment = payments
+      .filter(
+        (payment) =>
+          String(payment.method || "").toUpperCase() ===
+          "CASH"
+      )
+      .reduce(
+        (sum, payment) => sum + Number(payment.amount),
+        0
+      );
+
+    let updatedShift = shift;
+    let shiftCashChanged = false;
+
+    if (
+      shift &&
+      shift.status === "OPEN" &&
+      cashPayment > 0
+    ) {
+      updatedShift =
+        await shiftModel.decreaseExpectedCash(
+          client,
+          shift.id,
+          cashPayment
+        );
+
+      if (!updatedShift) {
+        throw createError(
+          "Expected cash shift tidak mencukupi atau shift sudah tidak aktif"
+        );
+      }
+
+      shiftCashChanged = true;
+    }
+
+    const updatedTransaction =
+      await transactionModel.updateStatus(
+        client,
+        transaction.id,
+        storeId,
+        targetStatus
+      );
+
+    await client.query("COMMIT");
+
+    return {
+      transaction: updatedTransaction,
+      restored_items: restoredItems,
+
+      cash_reversed: cashPayment,
+
+      shift: shift
+        ? {
+            id: shift.id,
+            status: shift.status,
+            expected_cash: Number(
+              shiftCashChanged
+                ? updatedShift.expected_cash
+                : shift.expected_cash
+            ),
+            cash_updated: shiftCashChanged,
+          }
+        : null,
+
+      outside_shift: !shift,
+      shift_cash_changed: shiftCashChanged,
+    };
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      console.error(
+        `Rollback ${actionLabel} gagal:`,
+        rollbackError
+      );
+    }
+
     throw error;
   } finally {
     client.release();
@@ -482,177 +832,13 @@ async function voidTransaction({
   userId,
   role,
 }) {
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
-
-    const transaction =
-      await transactionModel.findByIdForUpdate(
-        client,
-        transactionId,
-        storeId
-      );
-
-    if (!transaction) {
-      throw new Error("Transaksi tidak ditemukan");
-    }
-
-    if (transaction.status !== "COMPLETED") {
-      throw new Error(
-        `Transaksi tidak dapat di-void karena status saat ini ${transaction.status}`
-      );
-    }
-
-    if (
-      role !== "owner" &&
-      transaction.user_id !== userId
-    ) {
-      throw new Error(
-        "Anda tidak memiliki akses untuk melakukan void transaksi ini"
-      );
-    }
-
-    if (!transaction.shift_id) {
-      throw new Error(
-        "Transaksi tidak memiliki shift"
-      );
-    }
-
-    const shift = await shiftModel.findByIdForUpdate(
-      client,
-      transaction.shift_id,
-      storeId
-    );
-
-    if (!shift) {
-      throw new Error("Shift transaksi tidak ditemukan");
-    }
-
-    if (shift.status !== "OPEN") {
-      throw new Error(
-        "Transaksi hanya dapat di-void selama shift terkait masih OPEN"
-      );
-    }
-
-    const items =
-      await transactionModel.findItemsByTransactionIdForUpdate(
-        client,
-        transaction.id
-      );
-
-    if (!items.length) {
-      throw new Error("Item transaksi tidak ditemukan");
-    }
-
-    const payments =
-      await paymentModel.findByTransactionIdForUpdate(
-        client,
-        transaction.id
-      );
-
-    const restoredItems = [];
-
-    for (const item of items) {
-      if (!item.product_id) {
-        throw new Error(
-          `Produk pada item ${item.product_name} tidak ditemukan`
-        );
-      }
-
-      const inventory =
-        await inventoryModel.getInventoryForUpdate(
-          client,
-          item.product_id,
-          storeId
-        );
-
-      if (!inventory) {
-        throw new Error(
-          `Inventory untuk produk ${item.product_name} tidak ditemukan`
-        );
-      }
-
-      const updatedInventory =
-        await inventoryModel.increaseStock(
-          client,
-          inventory.id,
-          Number(item.quantity)
-        );
-
-      const movement =
-        await inventoryModel.createMovement(client, {
-          storeId,
-          productId: item.product_id,
-          type: "IN",
-          quantity: Number(item.quantity),
-          referenceType: "VOID",
-          referenceId: transaction.id,
-          notes:
-            `Pengembalian stok karena void ${transaction.transaction_number}`,
-          createdBy: userId,
-        });
-
-      restoredItems.push({
-        product_id: item.product_id,
-        product_name: item.product_name,
-        quantity: Number(item.quantity),
-        inventory: updatedInventory,
-        movement,
-      });
-    }
-
-    const cashPayment = payments
-      .filter((payment) => payment.method === "CASH")
-      .reduce(
-        (sum, payment) => sum + Number(payment.amount),
-        0
-      );
-
-    let updatedShift = shift;
-
-    if (cashPayment > 0) {
-      updatedShift =
-        await shiftModel.decreaseExpectedCash(
-          client,
-          shift.id,
-          cashPayment
-        );
-
-      if (!updatedShift) {
-        throw new Error(
-          "Expected cash shift tidak mencukupi untuk proses void"
-        );
-      }
-    }
-
-    const updatedTransaction =
-      await transactionModel.updateStatus(
-        client,
-        transaction.id,
-        storeId,
-        "VOID"
-      );
-
-    await client.query("COMMIT");
-
-    return {
-      transaction: updatedTransaction,
-      restored_items: restoredItems,
-      cash_reversed: cashPayment,
-      shift: {
-        id: shift.id,
-        expected_cash: Number(
-          updatedShift.expected_cash
-        ),
-      },
-    };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  return reverseTransaction({
+    transactionId,
+    storeId,
+    userId,
+    role,
+    targetStatus: "VOID",
+  });
 }
 
 async function refundTransaction({
@@ -661,178 +847,13 @@ async function refundTransaction({
   userId,
   role,
 }) {
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
-
-    const transaction =
-      await transactionModel.findByIdForUpdate(
-        client,
-        transactionId,
-        storeId
-      );
-
-    if (!transaction) {
-      throw new Error("Transaksi tidak ditemukan");
-    }
-
-    if (transaction.status !== "COMPLETED") {
-      throw new Error(
-        `Transaksi tidak dapat direfund karena status saat ini ${transaction.status}`
-      );
-    }
-
-    if (
-      role !== "owner" &&
-      transaction.user_id !== userId
-    ) {
-      throw new Error(
-        "Anda tidak memiliki akses untuk melakukan refund transaksi ini"
-      );
-    }
-
-    if (!transaction.shift_id) {
-      throw new Error(
-        "Transaksi tidak memiliki shift"
-      );
-    }
-
-    const shift = await shiftModel.findByIdForUpdate(
-      client,
-      transaction.shift_id,
-      storeId
-    );
-
-    if (!shift) {
-      throw new Error("Shift transaksi tidak ditemukan");
-    }
-
-    if (shift.status !== "OPEN") {
-      throw new Error(
-        "Transaksi hanya dapat direfund selama shift terkait masih OPEN"
-      );
-    }
-
-    const items =
-      await transactionModel.findItemsByTransactionIdForUpdate(
-        client,
-        transaction.id
-      );
-
-    if (!items.length) {
-      throw new Error("Item transaksi tidak ditemukan");
-    }
-
-    const payments =
-      await paymentModel.findByTransactionIdForUpdate(
-        client,
-        transaction.id
-      );
-
-    const restoredItems = [];
-
-    for (const item of items) {
-      if (!item.product_id) {
-        throw new Error(
-          `Produk pada item ${item.product_name} tidak ditemukan`
-        );
-      }
-
-      const inventory =
-        await inventoryModel.getInventoryForUpdate(
-          client,
-          item.product_id,
-          storeId
-        );
-
-      if (!inventory) {
-        throw new Error(
-          `Inventory untuk produk ${item.product_name} tidak ditemukan`
-        );
-      }
-
-      const updatedInventory =
-        await inventoryModel.increaseStock(
-          client,
-          inventory.id,
-          Number(item.quantity)
-        );
-
-      const movement =
-        await inventoryModel.createMovement(client, {
-          storeId,
-          productId: item.product_id,
-          type: "IN",
-          quantity: Number(item.quantity),
-          referenceType: "REFUND",
-          referenceId: transaction.id,
-          notes:
-            `Pengembalian stok karena refund ${transaction.transaction_number}`,
-          createdBy: userId,
-        });
-
-      restoredItems.push({
-        product_id: item.product_id,
-        product_name: item.product_name,
-        quantity: Number(item.quantity),
-        inventory: updatedInventory,
-        movement,
-      });
-    }
-
-    const cashPayment = payments
-      .filter((payment) => payment.method === "CASH")
-      .reduce(
-        (sum, payment) => sum + Number(payment.amount),
-        0
-      );
-
-    let updatedShift = shift;
-
-    if (cashPayment > 0) {
-      updatedShift =
-        await shiftModel.decreaseExpectedCash(
-          client,
-          shift.id,
-          cashPayment
-        );
-
-      if (!updatedShift) {
-        throw new Error(
-          "Expected cash shift tidak mencukupi untuk proses refund"
-        );
-      }
-    }
-
-    const updatedTransaction =
-      await transactionModel.updateStatus(
-        client,
-        transaction.id,
-        storeId,
-        "REFUNDED"
-      );
-
-    await client.query("COMMIT");
-
-    return {
-      transaction: updatedTransaction,
-      refunded_amount: Number(transaction.total),
-      restored_items: restoredItems,
-      cash_refunded: cashPayment,
-      shift: {
-        id: shift.id,
-        expected_cash: Number(
-          updatedShift.expected_cash
-        ),
-      },
-    };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  return reverseTransaction({
+    transactionId,
+    storeId,
+    userId,
+    role,
+    targetStatus: "REFUNDED",
+  });
 }
 
 module.exports = {
