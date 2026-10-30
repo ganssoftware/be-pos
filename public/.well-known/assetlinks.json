@@ -1,0 +1,14 @@
+[
+    {
+        "relation": [
+            "delegate_permission/common.handle_all_urls"
+        ],
+        "target": {
+            "namespace": "android_app",
+            "package_name": "com.ganssoftware.zuviko",
+            "sha256_cert_fingerprints": [
+                "89:F5:B5:01:62:78:15:1D:5B:1C:DA:96:F5:06:21:3A:6F:3E:E0:67:1A:71:BC:82:CE:FF:AD:B0:09:68:F3:B2"
+            ]
+        }
+    }
+]

@@ -1,0 +1,186 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reset Password - Zuviko</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 24px;
+            background: #f5f5f7;
+            font-family: Arial, sans-serif;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 420px;
+            padding: 32px 24px;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 8px 30px rgba(0,0,0,.06);
+        }
+
+        h2 {
+            text-align: center;
+        }
+
+        p {
+            color: #666;
+            line-height: 1.6;
+            text-align: center;
+        }
+
+        input {
+            width: 100%;
+            padding: 14px;
+            margin-top: 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 15px;
+        }
+
+        button {
+            width: 100%;
+            padding: 14px;
+            margin-top: 20px;
+            border: none;
+            border-radius: 8px;
+            background: #2563eb;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        button:disabled {
+            opacity: .6;
+        }
+
+        #message {
+            margin-top: 16px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <h2>Reset Password Zuviko</h2>
+
+    <p>Buat password baru untuk akun Zuviko kamu.</p>
+
+    <form id="resetForm">
+
+        <input
+            type="password"
+            id="password"
+            placeholder="Password Baru"
+            minlength="8"
+            maxlength="72"
+            required
+        >
+
+        <input
+            type="password"
+            id="confirmPassword"
+            placeholder="Konfirmasi Password"
+            minlength="8"
+            maxlength="72"
+            required
+        >
+
+        <button type="submit" id="submitButton">
+            Simpan Password Baru
+        </button>
+
+    </form>
+
+    <p id="message"></p>
+
+</div>
+
+<script>
+    const token = new URLSearchParams(
+        window.location.search
+    ).get("token");
+
+    const form = document.getElementById("resetForm");
+    const message = document.getElementById("message");
+    const button = document.getElementById("submitButton");
+
+    if (!token || !/^[a-f0-9]{64}$/i.test(token)) {
+        form.style.display = "none";
+        message.textContent = "Tautan reset password tidak valid.";
+    }
+
+    form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+
+        const password = document.getElementById("password").value;
+        const confirmation = document.getElementById("confirmPassword").value;
+
+        if (password.length < 8 || password.length > 72) {
+            message.textContent = "Password harus 8–72 karakter.";
+            return;
+        }
+
+        if (password !== confirmation) {
+            message.textContent = "Password tidak sama.";
+            return;
+        }
+
+        button.disabled = true;
+        button.textContent = "Memproses...";
+        message.textContent = "";
+
+        try {
+            const response = await fetch(
+                "/api/auth/password-reset/confirm",
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        token: token,
+                        new_password: password
+                    })
+                }
+            );
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(
+                    data.message || "Gagal mengubah password."
+                );
+            }
+
+            form.style.display = "none";
+
+            message.textContent =
+                "Password berhasil diubah. Silakan login kembali.";
+
+        } catch (error) {
+            message.textContent = error.message;
+        } finally {
+            button.disabled = false;
+            button.textContent = "Simpan Password Baru";
+        }
+    });
+</script>
+
+</body>
+</html>
