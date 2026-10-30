@@ -15,6 +15,18 @@
       "handle": "filesystem"
     },
     {
+      "src": "/\\.well-known/assetlinks\\.json",
+      "dest": "/public/.well-known/assetlinks.json"
+    },
+    {
+      "src": "/\\.well-known/apple-app-site-association",
+      "dest": "/public/.well-known/apple-app-site-association"
+    },
+    {
+      "src": "/reset-password/?",
+      "dest": "/public/reset-password/index.html"
+    },
+    {
       "src": "/(.*)",
       "dest": "src/server.js"
     }
