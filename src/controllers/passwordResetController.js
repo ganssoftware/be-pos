@@ -1,4 +1,3 @@
-
 const passwordResetService = require("../services/passwordResetService");
 
 async function requestReset(req, res, next) {
