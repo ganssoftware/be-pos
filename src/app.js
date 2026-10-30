@@ -20,7 +20,9 @@ const userRoutes = require("./routes/userRoutes");
 const reportRoutes = require("./routes/reportRoutes");
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const passwordResetRoutes = require("./routes/passwordResetRoutes");
+const superAdminDashboardRoutes = require('./routes/superAdminDashboardRoutes');
 const errorMiddleware = require("./middleware/errorMiddleware");
+
 
 const app = express();
 
@@ -80,6 +82,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/reports", reportRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use("/api/auth/password-reset", passwordResetRoutes);
+app.use('/api/super-admin', superAdminDashboardRoutes);
 
 app.use(errorMiddleware);
 
