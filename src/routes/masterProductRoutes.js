@@ -2,8 +2,8 @@ const express = require("express");
 const router = express.Router();
 
 const masterProductController = require("../controllers/masterProductController");
-const authMiddleware = require("../middlewares/authMiddleware");
-const roleMiddleware = require("../middlewares/roleMiddleware");
+const authMiddleware = require("../middleware/authMiddleware");
+const roleMiddleware = require("../middleware/roleMiddleware");
 
 router.get(
   "/barcode/:barcode",
