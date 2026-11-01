@@ -21,6 +21,7 @@ const reportRoutes = require("./routes/reportRoutes");
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const passwordResetRoutes = require("./routes/passwordResetRoutes");
 const superAdminDashboardRoutes = require('./routes/superAdminDashboardRoutes');
+const masterProductRoutes = require("./routes/masterProductRoutes");
 const errorMiddleware = require("./middleware/errorMiddleware");
 
 
@@ -83,6 +84,7 @@ app.use("/api/reports", reportRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use("/api/auth/password-reset", passwordResetRoutes);
 app.use('/api/super-admin', superAdminDashboardRoutes);
+app.use("/api/master-products", masterProductRoutes);
 
 app.use(errorMiddleware);
 

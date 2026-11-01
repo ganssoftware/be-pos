@@ -1,5 +1,8 @@
 const productModel = require("../models/productModel");
+const categoryModel = require("../models/categoryModel");
+const unitModel = require("../models/unitModel");
 const inventoryModel = require("../models/inventoryModel");
+
 const pool = require("../config/db");
 const supabaseAdmin = require("../config/supabase");
 
@@ -7,73 +10,118 @@ function parseNonNegativeNumber(value, fieldName) {
   const number = Number(value);
 
   if (!Number.isFinite(number) || number < 0) {
-    throw new Error(`${fieldName} harus berupa angka >= 0`);
+    const error = new Error(
+      `${fieldName} harus berupa angka >= 0`
+    );
+
+    error.statusCode = 400;
+    throw error;
   }
 
   return number;
 }
 
-async function validateCategory(storeId, categoryId) {
-  if (!categoryId) {
-    return;
+function cleanString(value) {
+  if (value === undefined || value === null) {
+    return null;
   }
 
-  const query = `
-    SELECT id
-    FROM categories
-    WHERE id = $1
-      AND store_id = $2
-    LIMIT 1
-  `;
+  const result = String(value).trim();
 
-  const result = await pool.query(query, [
-    categoryId,
-    storeId,
-  ]);
-
-  if (!result.rows[0]) {
-    const error = new Error(
-      "Kategori tidak ditemukan pada store ini"
-    );
-
-    error.statusCode = 400;
-
-    throw error;
-  }
+  return result || null;
 }
 
-async function validateUnit(storeId, unitId) {
-  if (!unitId) {
-    return;
-  }
-
-  const query = `
-    SELECT id
-    FROM units
-    WHERE id = $1
-      AND store_id = $2
-    LIMIT 1
-  `;
-
-  const result = await pool.query(query, [
-    unitId,
-    storeId,
-  ]);
-
-  if (!result.rows[0]) {
-    const error = new Error(
-      "Satuan tidak ditemukan pada store ini"
+async function resolveCategory(
+  client,
+  storeId,
+  categoryId,
+  categoryName
+) {
+  if (categoryId) {
+    const result = await client.query(
+      `
+        SELECT id
+        FROM categories
+        WHERE id = $1
+          AND store_id = $2
+        LIMIT 1
+      `,
+      [categoryId, storeId]
     );
 
-    error.statusCode = 400;
+    if (!result.rows[0]) {
+      const error = new Error(
+        "Kategori tidak ditemukan pada store ini"
+      );
 
-    throw error;
+      error.statusCode = 400;
+      throw error;
+    }
+
+    return result.rows[0].id;
   }
+
+  if (!categoryName) {
+    return null;
+  }
+
+  const category = await categoryModel.findOrCreate(
+    client,
+    storeId,
+    categoryName
+  );
+
+  return category.id;
+}
+
+async function resolveUnit(
+  client,
+  storeId,
+  unitId,
+  unitName,
+  unitSymbol
+) {
+  if (unitId) {
+    const result = await client.query(
+      `
+        SELECT id
+        FROM units
+        WHERE id = $1
+          AND store_id = $2
+        LIMIT 1
+      `,
+      [unitId, storeId]
+    );
+
+    if (!result.rows[0]) {
+      const error = new Error(
+        "Satuan tidak ditemukan pada store ini"
+      );
+
+      error.statusCode = 400;
+      throw error;
+    }
+
+    return result.rows[0].id;
+  }
+
+  if (!unitName) {
+    return null;
+  }
+
+  const unit = await unitModel.findOrCreate(
+    client,
+    storeId,
+    unitName,
+    unitSymbol
+  );
+
+  return unit.id;
 }
 
 function validateProductData(body) {
-  const sku = String(body.sku || "").trim();
-  const name = String(body.name || "").trim();
+  const sku = cleanString(body.sku);
+  const name = cleanString(body.name);
 
   if (!sku) {
     const error = new Error("SKU wajib diisi");
@@ -104,25 +152,30 @@ function validateProductData(body) {
 
   return {
     sku,
+
     name,
-    barcode: body.barcode
-      ? String(body.barcode).trim()
-      : null,
 
-    description: body.description
-      ? String(body.description).trim()
-      : null,
+    barcode: cleanString(body.barcode),
 
-    categoryId: body.category_id || null,
-    unitId: body.unit_id || null,
+    description: cleanString(body.description),
+
+    categoryId: cleanString(body.category_id),
+
+    categoryName: cleanString(body.category_name),
+
+    unitId: cleanString(body.unit_id),
+
+    unitName: cleanString(body.unit_name),
+
+    unitSymbol: cleanString(body.unit_symbol),
 
     purchasePrice,
+
     sellingPrice,
+
     minimumStock,
 
-    imageUrl: body.image_url
-      ? String(body.image_url).trim()
-      : null,
+    imageUrl: cleanString(body.image_url),
   };
 }
 
@@ -217,7 +270,8 @@ async function getProductByBarcode(req, res, next) {
     if (!product) {
       return res.status(404).json({
         success: false,
-        message: "Produk dengan barcode tersebut tidak ditemukan",
+        message:
+          "Produk dengan barcode tersebut tidak ditemukan",
       });
     }
 
@@ -239,7 +293,9 @@ async function getProductByBarcode(req, res, next) {
 
 async function getNextSku(req, res, next) {
   try {
-    const sku = await productModel.getNextSku(req.storeId);
+    const sku = await productModel.getNextSku(
+      req.storeId
+    );
 
     return res.json({
       success: true,
@@ -254,14 +310,15 @@ async function getNextSku(req, res, next) {
 }
 
 async function createProduct(req, res, next) {
-  const client = await pool.connect();
+  let client;
   let transactionStarted = false;
 
   try {
     const data = validateProductData(req.body);
 
-    // Validasi stok awal, default 0 jika tidak dikirim.
-    const initialStock = Number(req.body.initial_stock ?? 0);
+    const initialStock = Number(
+      req.body.initial_stock ?? 0
+    );
 
     if (
       !Number.isFinite(initialStock) ||
@@ -270,27 +327,41 @@ async function createProduct(req, res, next) {
       const error = new Error(
         "Stok awal harus berupa angka >= 0"
       );
+
       error.statusCode = 400;
       throw error;
     }
 
-    // Pastikan kategori dan satuan milik store yang aktif.
-    await validateCategory(req.storeId, data.categoryId);
-    await validateUnit(req.storeId, data.unitId);
+    client = await pool.connect();
 
     await client.query("BEGIN");
     transactionStarted = true;
 
-    // 1. Buat produk dalam transaksi yang sama.
+    const categoryId = await resolveCategory(
+      client,
+      req.storeId,
+      data.categoryId,
+      data.categoryName
+    );
+
+    const unitId = await resolveUnit(
+      client,
+      req.storeId,
+      data.unitId,
+      data.unitName,
+      data.unitSymbol
+    );
+
     const product = await productModel.create(
       {
         storeId: req.storeId,
         ...data,
+        categoryId,
+        unitId,
       },
       client
     );
 
-    // 2. Buat inventory dengan stok awal dari form.
     const inventoryResult = await client.query(
       `
         INSERT INTO inventory (
@@ -299,10 +370,12 @@ async function createProduct(req, res, next) {
           quantity
         )
         VALUES ($1, $2, $3)
+
         ON CONFLICT (store_id, product_id)
         DO UPDATE SET
           quantity = EXCLUDED.quantity,
           updated_at = NOW()
+
         RETURNING *
       `,
       [
@@ -312,7 +385,6 @@ async function createProduct(req, res, next) {
       ]
     );
 
-    // 3. Catat pergerakan stok awal jika jumlahnya > 0.
     let movement = null;
 
     if (initialStock > 0) {
@@ -338,12 +410,14 @@ async function createProduct(req, res, next) {
       message: "Produk berhasil dibuat",
       data: {
         ...product,
+        category_id: categoryId,
+        unit_id: unitId,
         stock: inventoryResult.rows[0].quantity,
       },
       stock_movement: movement,
     });
   } catch (error) {
-    if (transactionStarted) {
+    if (transactionStarted && client) {
       try {
         await client.query("ROLLBACK");
       } catch (rollbackError) {
@@ -371,7 +445,9 @@ async function createProduct(req, res, next) {
 
     return next(error);
   } finally {
-    client.release();
+    if (client) {
+      client.release();
+    }
   }
 }
 
@@ -407,6 +483,13 @@ const uploadProductImage = async (req, res) => {
 
     const extension =
       extensionMap[req.file.mimetype];
+
+    if (!extension) {
+      return res.status(400).json({
+        success: false,
+        message: "Format foto tidak didukung",
+      });
+    }
 
     const fileName =
       `${Date.now()}-${Math.random()
@@ -477,40 +560,61 @@ const uploadProductImage = async (req, res) => {
 };
 
 async function updateProduct(req, res, next) {
+  let client;
+  let transactionStarted = false;
+
   try {
     const data = validateProductData(req.body);
-
-    await validateCategory(
-      req.storeId,
-      data.categoryId
-    );
-
-    await validateUnit(
-      req.storeId,
-      data.unitId
-    );
 
     const isActive =
       req.body.is_active === undefined
         ? true
-        : Boolean(req.body.is_active);
+        : req.body.is_active === true ||
+          req.body.is_active === "true";
 
-    const product =
-      await productModel.update(
-        req.params.id,
-        req.storeId,
-        {
-          ...data,
-          isActive,
-        }
-      );
+    client = await pool.connect();
+
+    await client.query("BEGIN");
+    transactionStarted = true;
+
+    const categoryId = await resolveCategory(
+      client,
+      req.storeId,
+      data.categoryId,
+      data.categoryName
+    );
+
+    const unitId = await resolveUnit(
+      client,
+      req.storeId,
+      data.unitId,
+      data.unitName,
+      data.unitSymbol
+    );
+
+    const product = await productModel.update(
+      req.params.id,
+      req.storeId,
+      {
+        ...data,
+        categoryId,
+        unitId,
+        isActive,
+      },
+      client
+    );
 
     if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: "Produk tidak ditemukan",
-      });
+      const error = new Error(
+        "Produk tidak ditemukan"
+      );
+
+      error.statusCode = 404;
+      throw error;
     }
+
+    await client.query("COMMIT");
+    transactionStarted = false;
 
     return res.json({
       success: true,
@@ -518,6 +622,17 @@ async function updateProduct(req, res, next) {
       data: product,
     });
   } catch (error) {
+    if (transactionStarted && client) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (rollbackError) {
+        console.error(
+          "Rollback updateProduct gagal:",
+          rollbackError
+        );
+      }
+    }
+
     if (error.code === "23505") {
       return res.status(409).json({
         success: false,
@@ -533,7 +648,11 @@ async function updateProduct(req, res, next) {
       });
     }
 
-    next(error);
+    return next(error);
+  } finally {
+    if (client) {
+      client.release();
+    }
   }
 }
 
@@ -549,7 +668,8 @@ async function deleteProduct(req, res, next) {
     if (!product) {
       return res.status(404).json({
         success: false,
-        message: "Produk tidak ditemukan atau sudah tidak aktif",
+        message:
+          "Produk tidak ditemukan atau sudah tidak aktif",
       });
     }
 

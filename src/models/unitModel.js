@@ -71,6 +71,41 @@ async function findById(id, storeId) {
   return result.rows[0] || null;
 }
 
+async function findOrCreate(client, storeId, name, symbol = null) {
+  const normalizedName = String(name || "").trim();
+
+  if (!normalizedName) {
+    return null;
+  }
+
+  const normalizedSymbol = symbol
+    ? String(symbol).trim()
+    : null;
+
+  const query = `
+    INSERT INTO units (
+      store_id,
+      name,
+      symbol
+    )
+    VALUES ($1, $2, $3)
+
+    ON CONFLICT (store_id, (LOWER(BTRIM(name))))
+    DO UPDATE SET
+      name = units.name
+
+    RETURNING id, store_id, name, symbol
+  `;
+
+  const result = await client.query(query, [
+    storeId,
+    normalizedName,
+    normalizedSymbol,
+  ]);
+
+  return result.rows[0];
+}
+
 async function create({ storeId, name, symbol }) {
   const query = `
     INSERT INTO units (
@@ -132,4 +167,5 @@ module.exports = {
   create,
   update,
   remove,
+  findOrCreate,
 };

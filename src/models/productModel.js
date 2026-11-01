@@ -259,7 +259,7 @@ async function create(data, db = pool) {
   return result.rows[0];
 }
 
-async function update(id, storeId, data) {
+async function update(id, storeId, data, db = pool) {
   const query = `
     UPDATE products
     SET
@@ -280,7 +280,7 @@ async function update(id, storeId, data) {
     RETURNING *
   `;
 
-  const result = await pool.query(query, [
+  const result = await db.query(query, [
     data.categoryId || null,
     data.unitId || null,
     data.sku,
