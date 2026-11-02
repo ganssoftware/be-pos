@@ -3,13 +3,7 @@ const pool = require("../config/db");
 const JAKARTA_TZ = "Asia/Jakarta";
 
 const DATE_FILTER = `
-  AND t.created_at >= (
-    $2::date::timestamp AT TIME ZONE '${JAKARTA_TZ}'
-  )
-  AND t.created_at < (
-    ($3::date + INTERVAL '1 day')::timestamp
-    AT TIME ZONE '${JAKARTA_TZ}'
-  )
+  AND t.business_date BETWEEN $2::date AND $3::date
 `;
 
 async function getOverview(
@@ -76,9 +70,7 @@ async function getSalesTrend(
   const result = await pool.query(
     `
     SELECT
-      (t.created_at AT TIME ZONE '${JAKARTA_TZ}')::date
-        AS sales_date,
-
+      t.business_date AS sales_date,
       COUNT(*)::int AS transaction_count,
       COALESCE(SUM(t.total), 0) AS total_sales
 
@@ -89,8 +81,8 @@ async function getSalesTrend(
       ${DATE_FILTER}
       AND ($4::uuid IS NULL OR t.user_id = $4)
 
-    GROUP BY sales_date
-    ORDER BY sales_date ASC
+    GROUP BY t.business_date
+    ORDER BY t.business_date ASC
     `,
     [storeId, startDate, endDate, userId]
   );
@@ -153,9 +145,14 @@ async function getCashierAttendance(
       u.full_name,
 
       s.schedule_id,
-      ss.shift_name,
+
+      COALESCE(
+        s.schedule_name_snapshot,
+        ss.shift_name
+      ) AS shift_name,
 
       s.status AS shift_status,
+      s.business_date,
       s.opened_at,
       s.closed_at,
 
@@ -188,16 +185,10 @@ async function getCashierAttendance(
       AND ss.store_id = s.store_id
 
     WHERE s.store_id = $1
-      AND s.opened_at >= (
-        $2::date::timestamp AT TIME ZONE '${JAKARTA_TZ}'
-      )
-      AND s.opened_at < (
-        ($3::date + INTERVAL '1 day')::timestamp
-        AT TIME ZONE '${JAKARTA_TZ}'
-      )
+      AND s.business_date BETWEEN $2::date AND $3::date
       AND ($4::uuid IS NULL OR s.user_id = $4)
 
-    ORDER BY s.opened_at DESC
+    ORDER BY s.business_date DESC, s.opened_at DESC
     `,
     [storeId, startDate, endDate, userId]
   );
@@ -383,8 +374,26 @@ async function getTopProducts(
   storeId,
   startDate,
   endDate,
-  userId = null
+  userId = null,
+  includeProfit = false
 ) {
+  const profitColumns = includeProfit
+    ? `,
+      COALESCE(
+        SUM(ti.quantity * ti.cost_price),
+        0
+      ) AS total_cost,
+
+      COALESCE(
+        SUM(
+          ti.subtotal -
+          (ti.quantity * ti.cost_price)
+        ),
+        0
+      ) AS estimated_gross_profit
+    `
+    : "";
+
   const result = await pool.query(
     `
     SELECT
@@ -398,22 +407,9 @@ async function getTopProducts(
 
       COALESCE(
         SUM(ti.subtotal), 0
-      ) AS total_sales,
+      ) AS total_sales
 
-      COALESCE(
-        SUM(
-          (ti.quantity * ti.cost_price)
-        ),
-        0
-      ) AS total_cost,
-
-      COALESCE(
-        SUM(
-          ti.subtotal -
-          (ti.quantity * ti.cost_price)
-        ),
-        0
-      ) AS estimated_gross_profit
+      ${profitColumns}
 
     FROM transaction_items ti
 
@@ -439,15 +435,24 @@ async function getTopProducts(
     [storeId, startDate, endDate, userId]
   );
 
-  return result.rows.map((row) => ({
-    ...row,
-    quantity_sold: Number(row.quantity_sold),
-    total_sales: Number(row.total_sales),
-    total_cost: Number(row.total_cost),
-    estimated_gross_profit: Number(
-      row.estimated_gross_profit
-    ),
-  }));
+  return result.rows.map((row) => {
+    const item = {
+      product_id: row.product_id,
+      product_name: row.product_name,
+      sku: row.sku,
+      quantity_sold: Number(row.quantity_sold),
+      total_sales: Number(row.total_sales),
+    };
+
+    if (includeProfit) {
+      item.total_cost = Number(row.total_cost);
+      item.estimated_gross_profit = Number(
+        row.estimated_gross_profit
+      );
+    }
+
+    return item;
+  });
 }
 
 async function getProfitLoss(
@@ -493,7 +498,7 @@ async function getProfitLoss(
           AT TIME ZONE '${JAKARTA_TZ}'
         )
         AND e.created_at < (
-          ($3::date + INTERVAL '1 day')::timestamp
+          ($3::date + INTERVAL '1 day')
           AT TIME ZONE '${JAKARTA_TZ}'
         )
     )
@@ -550,8 +555,7 @@ async function getProfitLossTrend(
 
     daily_sales AS (
       SELECT
-        (t.created_at AT TIME ZONE '${JAKARTA_TZ}')::date
-          AS report_date,
+        t.business_date AS report_date,
 
         COALESCE(
           SUM(t.subtotal - t.discount),
@@ -564,13 +568,12 @@ async function getProfitLossTrend(
         AND t.status = 'COMPLETED'
         ${DATE_FILTER}
 
-      GROUP BY report_date
+      GROUP BY t.business_date
     ),
 
     daily_cogs AS (
       SELECT
-        (t.created_at AT TIME ZONE '${JAKARTA_TZ}')::date
-          AS report_date,
+        t.business_date AS report_date,
 
         COALESCE(
           SUM(ti.quantity * ti.cost_price),
@@ -586,7 +589,7 @@ async function getProfitLossTrend(
         AND t.status = 'COMPLETED'
         ${DATE_FILTER}
 
-      GROUP BY report_date
+      GROUP BY t.business_date
     ),
 
     daily_expenses AS (
@@ -595,8 +598,7 @@ async function getProfitLossTrend(
           AS report_date,
 
         COALESCE(
-          SUM(e.amount),
-          0
+          SUM(e.amount), 0
         ) AS total_expenses
 
       FROM public.expenses e
@@ -607,7 +609,7 @@ async function getProfitLossTrend(
           AT TIME ZONE '${JAKARTA_TZ}'
         )
         AND e.created_at < (
-          ($3::date + INTERVAL '1 day')::timestamp
+          ($3::date + INTERVAL '1 day')
           AT TIME ZONE '${JAKARTA_TZ}'
         )
 
@@ -706,13 +708,7 @@ async function getShiftSummary(
     FROM shifts s
 
     WHERE s.store_id = $1
-      AND s.opened_at >= (
-        $2::date::timestamp AT TIME ZONE '${JAKARTA_TZ}'
-      )
-      AND s.opened_at < (
-        ($3::date + INTERVAL '1 day')::timestamp
-        AT TIME ZONE '${JAKARTA_TZ}'
-      )
+      AND s.business_date BETWEEN $2::date AND $3::date
       AND ($4::uuid IS NULL OR s.user_id = $4)
     `,
     [storeId, startDate, endDate, userId]

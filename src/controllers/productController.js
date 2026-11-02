@@ -1,3 +1,4 @@
+
 const productModel = require("../models/productModel");
 const categoryModel = require("../models/categoryModel");
 const unitModel = require("../models/unitModel");
@@ -6,16 +7,49 @@ const inventoryModel = require("../models/inventoryModel");
 const pool = require("../config/db");
 const supabaseAdmin = require("../config/supabase");
 
+function createError(message, statusCode = 400) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function normalizeRole(role) {
+  if (typeof role === "string") {
+    return role.trim().toLowerCase();
+  }
+
+  if (role && typeof role === "object") {
+    return String(role.name || "")
+      .trim()
+      .toLowerCase();
+  }
+
+  return "";
+}
+
+function isOwner(req) {
+  return normalizeRole(req.user?.role) === "owner";
+}
+
 function parseNonNegativeNumber(value, fieldName) {
   const number = Number(value);
 
   if (!Number.isFinite(number) || number < 0) {
-    const error = new Error(
+    throw createError(
       `${fieldName} harus berupa angka >= 0`
     );
+  }
 
-    error.statusCode = 400;
-    throw error;
+  return number;
+}
+
+function parsePositiveNumber(value, fieldName) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number) || number <= 0) {
+    throw createError(
+      `${fieldName} harus berupa angka > 0`
+    );
   }
 
   return number;
@@ -29,6 +63,13 @@ function cleanString(value) {
   const result = String(value).trim();
 
   return result || null;
+}
+
+function hasOwn(object, property) {
+  return Object.prototype.hasOwnProperty.call(
+    object,
+    property
+  );
 }
 
 async function resolveCategory(
@@ -46,16 +87,16 @@ async function resolveCategory(
           AND store_id = $2
         LIMIT 1
       `,
-      [categoryId, storeId]
+      [
+        categoryId,
+        storeId,
+      ]
     );
 
     if (!result.rows[0]) {
-      const error = new Error(
+      throw createError(
         "Kategori tidak ditemukan pada store ini"
       );
-
-      error.statusCode = 400;
-      throw error;
     }
 
     return result.rows[0].id;
@@ -90,16 +131,16 @@ async function resolveUnit(
           AND store_id = $2
         LIMIT 1
       `,
-      [unitId, storeId]
+      [
+        unitId,
+        storeId,
+      ]
     );
 
     if (!result.rows[0]) {
-      const error = new Error(
+      throw createError(
         "Satuan tidak ditemukan pada store ini"
       );
-
-      error.statusCode = 400;
-      throw error;
     }
 
     return result.rows[0].id;
@@ -124,15 +165,11 @@ function validateProductData(body) {
   const name = cleanString(body.name);
 
   if (!sku) {
-    const error = new Error("SKU wajib diisi");
-    error.statusCode = 400;
-    throw error;
+    throw createError("SKU wajib diisi");
   }
 
   if (!name) {
-    const error = new Error("Nama produk wajib diisi");
-    error.statusCode = 400;
-    throw error;
+    throw createError("Nama produk wajib diisi");
   }
 
   const purchasePrice = parseNonNegativeNumber(
@@ -152,31 +189,233 @@ function validateProductData(body) {
 
   return {
     sku,
-
     name,
-
     barcode: cleanString(body.barcode),
-
     description: cleanString(body.description),
-
     categoryId: cleanString(body.category_id),
-
     categoryName: cleanString(body.category_name),
-
     unitId: cleanString(body.unit_id),
-
     unitName: cleanString(body.unit_name),
-
     unitSymbol: cleanString(body.unit_symbol),
-
     purchasePrice,
-
     sellingPrice,
-
     minimumStock,
-
     imageUrl: cleanString(body.image_url),
   };
+}
+
+
+function validateTier2(body) {
+  if (!hasOwn(body, "tier_2")) {
+    return undefined;
+  }
+
+  const value = body.tier_2;
+
+  if (
+    value === null ||
+    value === false ||
+    (
+      typeof value === "object" &&
+      value.enabled === false
+    )
+  ) {
+    return {
+      enabled: false,
+    };
+  }
+
+  if (!value || typeof value !== "object") {
+    throw createError(
+      "Konfigurasi Tier 2 tidak valid"
+    );
+  }
+
+  if (value.enabled === false) {
+    return {
+      enabled: false,
+    };
+  }
+
+  const minQuantity = parsePositiveNumber(
+    value.min_quantity,
+    "Minimal quantity Tier 2"
+  );
+
+  if (minQuantity < 2) {
+    throw createError(
+      "Minimal quantity Tier 2 harus minimal 2"
+    );
+  }
+
+  return {
+    enabled: true,
+    minQuantity,
+    price: parseNonNegativeNumber(
+      value.price,
+      "Harga Tier 2"
+    ),
+  };
+}
+
+function validateTier3(body) {
+  if (!hasOwn(body, "tier_3")) {
+    return undefined;
+  }
+
+  const value = body.tier_3;
+
+  if (
+    value === null ||
+    value === false ||
+    (
+      typeof value === "object" &&
+      value.enabled === false
+    )
+  ) {
+    return {
+      enabled: false,
+    };
+  }
+
+  if (!value || typeof value !== "object") {
+    throw createError(
+      "Konfigurasi Tier 3 tidak valid"
+    );
+  }
+
+  if (value.enabled === false) {
+    return {
+      enabled: false,
+    };
+  }
+
+  return {
+    enabled: true,
+    unitId: cleanString(value.unit_id),
+    unitName: cleanString(value.unit_name),
+    unitSymbol: cleanString(value.unit_symbol),
+    unitQuantity: parsePositiveNumber(
+      value.unit_quantity,
+      "Konversi satuan Tier 3"
+    ),
+    price: parseNonNegativeNumber(
+      value.price,
+      "Harga Tier 3"
+    ),
+  };
+}
+
+function validateAdditionalBarcodes(body) {
+  if (!hasOwn(body, "additional_barcodes")) {
+    return undefined;
+  }
+
+  if (!Array.isArray(body.additional_barcodes)) {
+    throw createError(
+      "Additional barcodes harus berupa array"
+    );
+  }
+
+  const barcodes = body.additional_barcodes.map(
+    (value) => {
+      const barcode = cleanString(value);
+
+      if (!barcode) {
+        throw createError(
+          "Barcode tambahan tidak boleh kosong"
+        );
+      }
+
+      return barcode;
+    }
+  );
+
+  if (new Set(barcodes).size !== barcodes.length) {
+    throw createError(
+      "Terdapat barcode tambahan yang duplikat"
+    );
+  }
+
+  return barcodes;
+}
+
+function validateTierConfiguration(
+  body,
+  primaryBarcode
+) {
+  const tier2 = validateTier2(body);
+  const tier3 = validateTier3(body);
+  const additionalBarcodes =
+    validateAdditionalBarcodes(body);
+
+  if (
+    additionalBarcodes !== undefined &&
+    additionalBarcodes.length > 0 &&
+    tier3?.enabled === false
+  ) {
+    throw createError(
+      "Barcode tambahan tidak dapat digunakan jika Tier 3 dinonaktifkan"
+    );
+  }
+
+  if (
+    primaryBarcode &&
+    additionalBarcodes?.includes(primaryBarcode)
+  ) {
+    throw createError(
+      "Barcode utama tidak boleh sama dengan barcode tambahan"
+    );
+  }
+
+  return {
+    tier2,
+    tier3,
+    additionalBarcodes,
+  };
+}
+
+async function saveTierConfiguration(
+  client,
+  productId,
+  storeId,
+  configuration
+) {
+  const {
+    tier2,
+    tier3,
+    additionalBarcodes,
+  } = configuration;
+
+  let resolvedTier3 = tier3;
+
+  if (tier3?.enabled) {
+    const tier3UnitId = await resolveUnit(
+      client,
+      storeId,
+      tier3.unitId,
+      tier3.unitName,
+      tier3.unitSymbol
+    );
+
+    if (!tier3UnitId) {
+      throw createError(
+        "Satuan kemasan Tier 3 wajib dipilih"
+      );
+    }
+
+    resolvedTier3 = {
+      ...tier3,
+      unitId: tier3UnitId,
+    };
+  }
+
+  await productModel.savePriceTiers(client, {
+    productId,
+    tier2,
+    tier3: resolvedTier3,
+    additionalBarcodes,
+  });
 }
 
 async function getProducts(req, res, next) {
@@ -205,6 +444,9 @@ async function getProducts(req, res, next) {
         limit,
         search,
         categoryId,
+      },
+      {
+        includeCostPrice: isOwner(req),
       }
     );
 
@@ -229,7 +471,10 @@ async function getProductById(req, res, next) {
   try {
     const product = await productModel.findById(
       req.params.id,
-      req.storeId
+      req.storeId,
+      {
+        includeCostPrice: isOwner(req),
+      }
     );
 
     if (!product) {
@@ -261,11 +506,13 @@ async function getProductByBarcode(req, res, next) {
       });
     }
 
-    const product =
-      await productModel.findByBarcode(
-        barcode,
-        req.storeId
-      );
+    const product = await productModel.findByBarcode(
+      barcode,
+      req.storeId,
+      {
+        includeCostPrice: isOwner(req),
+      }
+    );
 
     if (!product) {
       return res.status(404).json({
@@ -316,21 +563,16 @@ async function createProduct(req, res, next) {
   try {
     const data = validateProductData(req.body);
 
-    const initialStock = Number(
-      req.body.initial_stock ?? 0
-    );
-
-    if (
-      !Number.isFinite(initialStock) ||
-      initialStock < 0
-    ) {
-      const error = new Error(
-        "Stok awal harus berupa angka >= 0"
+    const tierConfiguration =
+      validateTierConfiguration(
+        req.body,
+        data.barcode
       );
 
-      error.statusCode = 400;
-      throw error;
-    }
+    const initialStock = parseNonNegativeNumber(
+      req.body.initial_stock ?? 0,
+      "Stok awal"
+    );
 
     client = await pool.connect();
 
@@ -352,6 +594,16 @@ async function createProduct(req, res, next) {
       data.unitSymbol
     );
 
+    if (
+      (tierConfiguration.tier2?.enabled ||
+        tierConfiguration.tier3?.enabled) &&
+      !unitId
+    ) {
+      throw createError(
+        "Produk dengan tier harga wajib memiliki satuan dasar"
+      );
+    }
+
     const product = await productModel.create(
       {
         storeId: req.storeId,
@@ -360,6 +612,13 @@ async function createProduct(req, res, next) {
         unitId,
       },
       client
+    );
+
+    await saveTierConfiguration(
+      client,
+      product.id,
+      req.storeId,
+      tierConfiguration
     );
 
     const inventoryResult = await client.query(
@@ -405,15 +664,18 @@ async function createProduct(req, res, next) {
     await client.query("COMMIT");
     transactionStarted = false;
 
+    const savedProduct = await productModel.findById(
+      product.id,
+      req.storeId,
+      {
+        includeCostPrice: true,
+      }
+    );
+
     return res.status(201).json({
       success: true,
       message: "Produk berhasil dibuat",
-      data: {
-        ...product,
-        category_id: categoryId,
-        unit_id: unitId,
-        stock: inventoryResult.rows[0].quantity,
-      },
+      data: savedProduct,
       stock_movement: movement,
     });
   } catch (error) {
@@ -432,6 +694,7 @@ async function createProduct(req, res, next) {
       return res.status(409).json({
         success: false,
         message:
+          error.message ||
           "SKU atau barcode sudah digunakan pada store ini",
       });
     }
@@ -451,7 +714,7 @@ async function createProduct(req, res, next) {
   }
 }
 
-const uploadProductImage = async (req, res) => {
+async function uploadProductImage(req, res) {
   try {
     const { id } = req.params;
     const storeId = req.storeId;
@@ -465,7 +728,10 @@ const uploadProductImage = async (req, res) => {
 
     const product = await productModel.findById(
       id,
-      storeId
+      storeId,
+      {
+        includeCostPrice: false,
+      }
     );
 
     if (!product) {
@@ -529,8 +795,7 @@ const uploadProductImage = async (req, res) => {
       .from("product-images")
       .getPublicUrl(filePath);
 
-    const imageUrl =
-      publicUrlData.publicUrl;
+    const imageUrl = publicUrlData.publicUrl;
 
     const updatedProduct =
       await productModel.updateImage(
@@ -557,7 +822,7 @@ const uploadProductImage = async (req, res) => {
         "Gagal upload foto produk",
     });
   }
-};
+}
 
 async function updateProduct(req, res, next) {
   let client;
@@ -566,11 +831,17 @@ async function updateProduct(req, res, next) {
   try {
     const data = validateProductData(req.body);
 
+    const tierConfiguration =
+      validateTierConfiguration(
+        req.body,
+        data.barcode
+      );
+
     const isActive =
       req.body.is_active === undefined
         ? true
         : req.body.is_active === true ||
-          req.body.is_active === "true";
+        req.body.is_active === "true";
 
     client = await pool.connect();
 
@@ -605,21 +876,44 @@ async function updateProduct(req, res, next) {
     );
 
     if (!product) {
-      const error = new Error(
-        "Produk tidak ditemukan"
+      throw createError(
+        "Produk tidak ditemukan",
+        404
       );
-
-      error.statusCode = 404;
-      throw error;
     }
+
+    if (
+      (tierConfiguration.tier2?.enabled ||
+        tierConfiguration.tier3?.enabled) &&
+      !unitId
+    ) {
+      throw createError(
+        "Produk dengan tier harga wajib memiliki satuan dasar"
+      );
+    }
+
+    await saveTierConfiguration(
+      client,
+      product.id,
+      req.storeId,
+      tierConfiguration
+    );
 
     await client.query("COMMIT");
     transactionStarted = false;
 
+    const savedProduct = await productModel.findById(
+      product.id,
+      req.storeId,
+      {
+        includeCostPrice: true,
+      }
+    );
+
     return res.json({
       success: true,
       message: "Produk berhasil diperbarui",
-      data: product,
+      data: savedProduct,
     });
   } catch (error) {
     if (transactionStarted && client) {
@@ -637,6 +931,7 @@ async function updateProduct(req, res, next) {
       return res.status(409).json({
         success: false,
         message:
+          error.message ||
           "SKU atau barcode sudah digunakan pada store ini",
       });
     }

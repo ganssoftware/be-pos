@@ -1,5 +1,19 @@
 const shiftModel = require("../models/shiftModel");
 
+function normalizeRole(role) {
+  if (typeof role === "string") {
+    return role.trim().toLowerCase();
+  }
+
+  if (role && typeof role === "object") {
+    return String(role.name || "")
+      .trim()
+      .toLowerCase();
+  }
+
+  return "";
+}
+
 function parseNonNegativeNumber(value) {
   const number = Number(value);
 
@@ -12,93 +26,88 @@ function parseNonNegativeNumber(value) {
 
 async function openShift(req, res) {
   try {
-    const { schedule_id: scheduleId } = req.body;
+    const { schedule_id } = req.body;
 
-    if (!scheduleId) {
+    if (!schedule_id) {
       return res.status(400).json({
-        success: false,
-        message: "schedule_id wajib diisi",
+        message: "Schedule ID wajib diisi",
       });
     }
 
     const shift = await shiftModel.openFromSchedule({
-      scheduleId,
+      scheduleId: schedule_id,
       storeId: req.storeId,
       userId: req.user.user_id,
     });
 
     return res.status(201).json({
-      success: true,
       message: "Shift berhasil dibuka",
       data: shift,
     });
+
   } catch (error) {
     console.error("Open shift error:", error);
 
-    const statusCode = error.statusCode || 500;
-
-    return res.status(statusCode).json({
-      success: false,
+    return res.status(error.statusCode || 500).json({
       message:
-        statusCode === 500
-          ? "Gagal membuka shift"
-          : error.message,
+        error.statusCode
+          ? error.message
+          : "Terjadi kesalahan saat membuka shift",
     });
   }
 }
 
-async function getCurrentShift(req, res, next) {
+async function getCurrentShift(req, res) {
   try {
-    const shift =
-      await shiftModel.findCurrentByUserId(
-        req.user.user_id,
-        req.storeId
-      );
+    const shift = await shiftModel.findCurrentByUserId(
+      req.user.user_id,
+      req.storeId
+    );
 
     return res.status(200).json({
-      success: true,
+      message: "Berhasil mengambil shift aktif",
       data: shift,
     });
+
   } catch (error) {
-    next(error);
+    console.error("Get current shift error:", error);
+
+    return res.status(500).json({
+      message: "Gagal mengambil shift aktif",
+    });
   }
 }
 
-async function getShifts(req, res, next) {
+async function getShifts(req, res) {
   try {
+    const role = normalizeRole(req.user.role);
+
     const page = Math.max(
-      Number(req.query.page) || 1,
-      1
+      1,
+      Number.parseInt(req.query.page, 10) || 1
     );
 
     const limit = Math.min(
+      100,
       Math.max(
-        Number(req.query.limit) || 20,
-        1
-      ),
-      100
+        1,
+        Number.parseInt(req.query.limit, 10) || 20
+      )
     );
 
     const status = String(
       req.query.status || ""
-    )
-      .trim()
-      .toUpperCase();
+    ).trim().toUpperCase();
 
-    if (
-      status &&
-      !["OPEN", "CLOSED"].includes(status)
-    ) {
+    if (status && !["OPEN", "CLOSED"].includes(status)) {
       return res.status(400).json({
-        success: false,
-        message:
-          "Status harus OPEN atau CLOSED",
+        message: "Status shift tidak valid",
       });
     }
 
     const userId =
-      req.user.role === "owner"
-        ? ""
+      role === "owner"
+        ? String(req.query.user_id || "").trim()
         : req.user.user_id;
 
     const result = await shiftModel.findAll(
@@ -112,78 +121,83 @@ async function getShifts(req, res, next) {
     );
 
     return res.status(200).json({
-      success: true,
-      data: result.data,
-      pagination: result.pagination,
+      message: "Berhasil mengambil data shift",
+      ...result,
     });
+
   } catch (error) {
-    next(error);
+    console.error("Get shifts error:", error);
+
+    return res.status(500).json({
+      message: "Gagal mengambil data shift",
+    });
   }
 }
 
 async function closeShift(req, res) {
   try {
-    const { closing_cash: closingCash } = req.body;
+    const { id } = req.params;
+    const { closing_cash } = req.body;
 
-    if (
-      closingCash === undefined ||
-      closingCash === null ||
-      closingCash === "" ||
-      !Number.isFinite(Number(closingCash)) ||
-      Number(closingCash) < 0
-    ) {
+    const closingCash = parseNonNegativeNumber(
+      closing_cash
+    );
+
+    if (closingCash === null) {
       return res.status(400).json({
-        success: false,
-        message: "closing_cash harus berupa angka dan tidak boleh negatif",
+        message: "Closing cash harus berupa angka positif atau nol",
       });
     }
 
     const shift = await shiftModel.findById(
-      req.params.id,
+      id,
       req.storeId
     );
 
     if (!shift) {
       return res.status(404).json({
-        success: false,
         message: "Shift tidak ditemukan",
       });
     }
 
-    if (
-      shift.user_id !== req.user.user_id &&
-      req.user.role !== "owner"
-    ) {
+    const role = normalizeRole(req.user.role);
+
+    const isOwner = role === "owner";
+
+    const isOwnShift =
+      shift.user_id === req.user.user_id;
+
+    if (!isOwner && !isOwnShift) {
       return res.status(403).json({
-        success: false,
-        message: "Anda tidak memiliki akses ke shift ini",
+        message: "Anda tidak memiliki akses untuk menutup shift ini",
       });
     }
 
-    const closedShift = await shiftModel.close(
-      req.params.id,
+    const result = await shiftModel.close(
+      id,
       req.storeId,
-      Number(closingCash)
+      closingCash
     );
 
-    if (!closedShift) {
+    if (!result) {
       return res.status(409).json({
-        success: false,
-        message: "Shift sudah ditutup atau tidak dapat ditutup",
+        message: "Shift tidak ditemukan atau sudah ditutup",
       });
     }
 
     return res.status(200).json({
-      success: true,
       message: "Shift berhasil ditutup",
-      data: closedShift,
+      data: result,
     });
+
   } catch (error) {
     console.error("Close shift error:", error);
 
-    return res.status(500).json({
-      success: false,
-      message: "Gagal menutup shift",
+    return res.status(error.statusCode || 500).json({
+      message:
+        error.statusCode
+          ? error.message
+          : "Terjadi kesalahan saat menutup shift",
     });
   }
 }

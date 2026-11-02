@@ -1,3 +1,4 @@
+
 const reportModel = require("../models/reportModel");
 const {
   getRoleName,
@@ -116,12 +117,14 @@ function getPagination(req, res) {
   };
 }
 
-// Owner mendapatkan seluruh data toko.
-// Kasir hanya mendapatkan data miliknya.
 function getReportUserId(req) {
   return getRoleName(req.user) === "cashier"
     ? req.user.user_id
     : null;
+}
+
+function isOwner(req) {
+  return getRoleName(req.user) === "owner";
 }
 
 async function getOverview(req, res, next) {
@@ -310,7 +313,8 @@ async function getProducts(req, res, next) {
       req.storeId,
       range.startDate,
       range.endDate,
-      getReportUserId(req)
+      getReportUserId(req),
+      isOwner(req)
     );
 
     return res.status(200).json({
@@ -351,8 +355,15 @@ async function getShifts(req, res, next) {
 
 async function getProfitLoss(req, res, next) {
   try {
-    const range = getDateRange(req, res);
+    if (!isOwner(req)) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Laporan laba rugi hanya dapat diakses owner",
+      });
+    }
 
+    const range = getDateRange(req, res);
     if (!range) return;
 
     const [summary, trend] = await Promise.all([

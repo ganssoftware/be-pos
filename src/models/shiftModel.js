@@ -1,26 +1,40 @@
+
 const pool = require("../config/db");
 
+function createError(message, statusCode = 400) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function isUniqueViolation(error) {
+  return error && error.code === "23505";
+}
+
 async function findCurrentByUserId(userId, storeId) {
-    const query = `
+  const query = `
         SELECT
             s.id,
             s.store_id,
             s.user_id,
             s.schedule_id,
+            s.business_date,
+            s.schedule_name_snapshot,
+            s.scheduled_start_time_snapshot,
+            s.scheduled_end_time_snapshot,
             CASE
-                WHEN st.opening_cash_enabled THEN s.opening_cash
+                WHEN st.opening_cash_enabled = TRUE
+                THEN s.opening_cash
                 ELSE NULL
             END AS opening_cash,
             s.expected_cash,
-            s.closing_cash,
-            s.difference,
             s.status,
             s.opened_at,
             s.closed_at,
-            st.opening_cash_enabled
+            s.created_at,
+            s.updated_at
         FROM shifts s
-        INNER JOIN stores st
-            ON st.id = s.store_id
+        INNER JOIN stores st ON st.id = s.store_id
         WHERE s.user_id = $1
           AND s.store_id = $2
           AND s.status = 'OPEN'
@@ -28,19 +42,25 @@ async function findCurrentByUserId(userId, storeId) {
         LIMIT 1
     `;
 
-    const result = await pool.query(query, [userId, storeId]);
-    return result.rows[0] || null;
+  const result = await pool.query(query, [userId, storeId]);
+
+  return result.rows[0] || null;
 }
 
 async function findById(id, storeId) {
-    const query = `
+  const query = `
         SELECT
             s.id,
             s.store_id,
             s.user_id,
             s.schedule_id,
+            s.business_date,
+            s.schedule_name_snapshot,
+            s.scheduled_start_time_snapshot,
+            s.scheduled_end_time_snapshot,
             CASE
-                WHEN st.opening_cash_enabled THEN s.opening_cash
+                WHEN st.opening_cash_enabled = TRUE
+                THEN s.opening_cash
                 ELSE NULL
             END AS opening_cash,
             s.expected_cash,
@@ -49,81 +69,76 @@ async function findById(id, storeId) {
             s.status,
             s.opened_at,
             s.closed_at,
-            st.opening_cash_enabled,
+            s.created_at,
+            s.updated_at,
             u.username,
             u.full_name
         FROM shifts s
-        INNER JOIN users u
-            ON u.id = s.user_id
-        INNER JOIN stores st
-            ON st.id = s.store_id
+        INNER JOIN stores st ON st.id = s.store_id
+        INNER JOIN users u ON u.id = s.user_id
         WHERE s.id = $1
           AND s.store_id = $2
         LIMIT 1
     `;
 
-    const result = await pool.query(query, [id, storeId]);
+  const result = await pool.query(query, [id, storeId]);
 
-    return result.rows[0] || null;
+  return result.rows[0] || null;
 }
 
 async function findAll(
-    storeId,
-    {
-        page = 1,
-        limit = 20,
-        status = "",
-        userId = "",
-    } = {}
+  storeId,
+  {
+    page = 1,
+    limit = 20,
+    status = "",
+    userId = "",
+  } = {}
 ) {
-    const safePage = Math.max(1, Number(page) || 1);
-    const safeLimit = Math.min(
-        100,
-        Math.max(1, Number(limit) || 20)
-    );
+  const offset = (page - 1) * limit;
 
-    const offset = (safePage - 1) * safeLimit;
+  const conditions = ["s.store_id = $1"];
+  const values = [storeId];
 
-    const conditions = ["s.store_id = $1"];
-    const values = [storeId];
+  if (status) {
+    values.push(status);
+    conditions.push(`s.status = $${values.length}`);
+  }
 
-    if (userId) {
-        values.push(userId);
-        conditions.push(`s.user_id = $${values.length}`);
-    }
+  if (userId) {
+    values.push(userId);
+    conditions.push(`s.user_id = $${values.length}`);
+  }
 
-    if (status) {
-        values.push(status);
-        conditions.push(`s.status = $${values.length}`);
-    }
+  const whereClause = conditions.join(" AND ");
 
-    const whereClause = conditions.join(" AND ");
-
-    const countResult = await pool.query(
-        `
+  const countQuery = `
         SELECT COUNT(*) AS total
         FROM shifts s
         WHERE ${whereClause}
-        `,
-        values
-    );
+    `;
 
-    const total = Number(countResult.rows[0].total);
+  const countValues = [...values];
 
-    const dataValues = [...values, safeLimit, offset];
+  values.push(limit);
+  const limitParam = `$${values.length}`;
 
-    const limitParam = `$${values.length + 1}`;
-    const offsetParam = `$${values.length + 2}`;
+  values.push(offset);
+  const offsetParam = `$${values.length}`;
 
-    const dataResult = await pool.query(
-        `
+  const dataQuery = `
         SELECT
             s.id,
             s.store_id,
             s.user_id,
             s.schedule_id,
+            s.business_date,
+            s.schedule_name_snapshot,
+            s.scheduled_start_time_snapshot,
+            s.scheduled_end_time_snapshot,
             CASE
-                WHEN st.opening_cash_enabled THEN s.opening_cash
+                WHEN st.opening_cash_enabled = TRUE
+                THEN s.opening_cash
                 ELSE NULL
             END AS opening_cash,
             s.expected_cash,
@@ -132,113 +147,495 @@ async function findAll(
             s.status,
             s.opened_at,
             s.closed_at,
-            st.opening_cash_enabled,
+            s.created_at,
+            s.updated_at,
             u.username,
             u.full_name
         FROM shifts s
-        INNER JOIN users u
-            ON u.id = s.user_id
-        INNER JOIN stores st
-            ON st.id = s.store_id
+        INNER JOIN stores st ON st.id = s.store_id
+        INNER JOIN users u ON u.id = s.user_id
         WHERE ${whereClause}
-        ORDER BY
-            s.opened_at DESC NULLS LAST,
-            s.created_at DESC
+        ORDER BY s.opened_at DESC
         LIMIT ${limitParam}
         OFFSET ${offsetParam}
-        `,
-        dataValues
-    );
+    `;
 
-    return {
-        data: dataResult.rows,
-        pagination: {
-            page: safePage,
-            limit: safeLimit,
-            total,
-            total_pages: Math.ceil(total / safeLimit),
-        },
-    };
+  const [countResult, dataResult] = await Promise.all([
+    pool.query(countQuery, countValues),
+    pool.query(dataQuery, values),
+  ]);
+
+  const total = Number(countResult.rows[0].total);
+
+  return {
+    data: dataResult.rows,
+    pagination: {
+      page,
+      limit,
+      total,
+      total_pages: Math.ceil(total / limit),
+    },
+  };
 }
 
-async function create({
-    storeId,
-    userId,
-    openingCash = 0,
+async function openFromSchedule({
+  scheduleId,
+  storeId,
+  userId,
 }) {
-    const result = await pool.query(
-        `
-        INSERT INTO shifts (
-            store_id,
-            user_id,
-            opening_cash,
-            expected_cash,
-            status,
-            opened_at
-        )
-        VALUES ($1, $2, $3, $3, 'OPEN', NOW())
-        RETURNING
-            id,
-            store_id,
-            user_id,
-            opening_cash,
-            expected_cash,
-            closing_cash,
-            difference,
-            status,
-            opened_at,
-            closed_at
-        `,
-        [storeId, userId, openingCash]
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    await client.query(
+      `
+                SELECT pg_advisory_xact_lock(
+                    hashtext($1),
+                    hashtext($2)
+                )
+            `,
+      [String(storeId), String(userId)]
     );
 
-    return result.rows[0];
+    const scheduleQuery = `
+            SELECT
+                ss.id,
+                ss.store_id,
+                ss.user_id,
+                ss.shift_name,
+                ss.shift_date,
+                ss.start_time,
+                ss.end_time,
+                ss.working_days,
+                ss.opening_cash,
+                ss.status,
+                st.opening_cash_enabled,
+                clock.local_now,
+                clock.business_date,
+                clock.iso_weekday,
+                (
+                    clock.business_date + ss.start_time
+                ) AS scheduled_start,
+                (
+                    clock.business_date
+                    + CASE
+                        WHEN ss.end_time <= ss.start_time THEN 1
+                        ELSE 0
+                    END
+                    + ss.end_time
+                ) AS scheduled_end,
+                (
+                    clock.local_now >=
+                        (clock.business_date + ss.start_time)
+                        - INTERVAL '15 minutes'
+                    AND clock.local_now <=
+                        (clock.business_date + ss.start_time)
+                        + INTERVAL '1 hour'
+                ) AS is_within_opening_window,
+                (
+                    clock.iso_weekday = ANY(ss.working_days)
+                ) AS is_working_day
+            FROM shift_schedules ss
+            INNER JOIN stores st ON st.id = ss.store_id
+            CROSS JOIN (
+                SELECT
+                    CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta'
+                        AS local_now,
+                    (
+                        CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta'
+                    )::DATE AS business_date,
+                    EXTRACT(
+                        ISODOW FROM
+                        CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta'
+                    )::SMALLINT AS iso_weekday
+            ) clock
+            WHERE ss.id = $1
+              AND ss.store_id = $2
+              AND ss.user_id = $3
+            LIMIT 1
+            FOR UPDATE OF ss
+        `;
+
+    const scheduleResult = await client.query(
+      scheduleQuery,
+      [scheduleId, storeId, userId]
+    );
+
+    const schedule = scheduleResult.rows[0];
+
+    if (!schedule) {
+      throw createError(
+        "Jadwal shift tidak ditemukan atau bukan milik Anda",
+        404
+      );
+    }
+
+    if (schedule.status !== "SCHEDULED") {
+      throw createError("Jadwal shift tidak aktif", 409);
+    }
+
+    if (
+      schedule.shift_date &&
+      String(schedule.shift_date).slice(0, 10) !==
+      String(schedule.business_date).slice(0, 10)
+    ) {
+      throw createError(
+        "Jadwal ini bukan untuk tanggal hari ini",
+        403
+      );
+    }
+
+    if (!schedule.is_working_day) {
+      throw createError(
+        "Anda tidak memiliki jadwal kerja pada hari ini",
+        403
+      );
+    }
+
+    if (!schedule.is_within_opening_window) {
+      throw createError(
+        "Shift hanya dapat dibuka mulai 15 menit sebelum hingga 1 jam setelah jadwal dimulai",
+        409
+      );
+    }
+
+    const currentShiftQuery = `
+            SELECT id
+            FROM shifts
+            WHERE user_id = $1
+              AND store_id = $2
+              AND status = 'OPEN'
+            LIMIT 1
+            FOR UPDATE
+        `;
+
+    const currentShiftResult = await client.query(
+      currentShiftQuery,
+      [userId, storeId]
+    );
+
+    if (currentShiftResult.rowCount > 0) {
+      throw createError(
+        "Anda masih memiliki shift yang terbuka",
+        409
+      );
+    }
+
+    const openingCash = schedule.opening_cash_enabled
+      ? Number(schedule.opening_cash || 0)
+      : 0;
+
+    const insertQuery = `
+            INSERT INTO shifts (
+                store_id,
+                user_id,
+                schedule_id,
+                business_date,
+                schedule_name_snapshot,
+                scheduled_start_time_snapshot,
+                scheduled_end_time_snapshot,
+                opening_cash,
+                expected_cash,
+                status,
+                opened_at
+            )
+            VALUES (
+                $1, $2, $3, $4,
+                $5, $6, $7,
+                $8, $8,
+                'OPEN',
+                NOW()
+            )
+            RETURNING
+                id,
+                store_id,
+                user_id,
+                schedule_id,
+                business_date,
+                schedule_name_snapshot,
+                scheduled_start_time_snapshot,
+                scheduled_end_time_snapshot,
+                opening_cash,
+                expected_cash,
+                status,
+                opened_at,
+                created_at
+        `;
+
+    const insertResult = await client.query(
+      insertQuery,
+      [
+        storeId,
+        userId,
+        schedule.id,
+        schedule.business_date,
+        schedule.shift_name,
+        schedule.start_time,
+        schedule.end_time,
+        openingCash,
+      ]
+    );
+
+    await client.query("COMMIT");
+
+    const shift = insertResult.rows[0];
+
+    return {
+      ...shift,
+      opening_cash: schedule.opening_cash_enabled
+        ? shift.opening_cash
+        : null,
+    };
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      console.error(
+        "Rollback open shift gagal:",
+        rollbackError
+      );
+    }
+
+    if (isUniqueViolation(error)) {
+      if (
+        error.constraint ===
+        "uq_shifts_one_open_per_user_store"
+      ) {
+        throw createError(
+          "Anda masih memiliki shift yang terbuka",
+          409
+        );
+      }
+
+      throw createError(
+        "Jadwal shift ini sudah pernah dibuka pada tanggal kerja yang sama",
+        409
+      );
+    }
+
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function close(id, storeId, closingCash) {
-    const result = await pool.query(
-        `
-        UPDATE shifts
-        SET
-            closing_cash = $1,
-            difference = $1 - expected_cash,
-            status = 'CLOSED',
-            closed_at = NOW(),
-            updated_at = NOW()
-        WHERE id = $2
-          AND store_id = $3
-          AND status = 'OPEN'
-        RETURNING
-            id,
-            store_id,
-            user_id,
-            schedule_id,
-            opening_cash,
-            expected_cash,
-            closing_cash,
-            difference,
-            status,
-            opened_at,
-            closed_at
-        `,
-        [closingCash, id, storeId]
+  const client = await pool.connect();
+
+  try {
+    const closingCashValue = String(closingCash).trim();
+    const closingCashNumber = Number(closingCashValue);
+
+    if (
+      closingCashValue === "" ||
+      !Number.isFinite(closingCashNumber) ||
+      closingCashNumber < 0
+    ) {
+      throw createError(
+        "Jumlah kas penutupan harus berupa angka dan tidak boleh negatif"
+      );
+    }
+
+    await client.query("BEGIN");
+
+    const shiftQuery = `
+            SELECT
+                s.id,
+                s.store_id,
+                s.user_id,
+                s.business_date,
+                s.schedule_name_snapshot,
+                s.scheduled_start_time_snapshot,
+                s.scheduled_end_time_snapshot,
+                s.expected_cash,
+                s.status,
+                clock.local_now,
+                CASE
+                    WHEN s.scheduled_start_time_snapshot IS NOT NULL
+                     AND s.scheduled_end_time_snapshot IS NOT NULL
+                    THEN (
+                        s.business_date
+                        + CASE
+                            WHEN s.scheduled_end_time_snapshot
+                                 <= s.scheduled_start_time_snapshot
+                            THEN 1
+                            ELSE 0
+                        END
+                        + s.scheduled_end_time_snapshot
+                    )
+                    ELSE NULL
+                END AS scheduled_end,
+                CASE
+                    WHEN s.scheduled_start_time_snapshot IS NULL
+                      OR s.scheduled_end_time_snapshot IS NULL
+                    THEN TRUE
+                    ELSE clock.local_now >= (
+                        s.business_date
+                        + CASE
+                            WHEN s.scheduled_end_time_snapshot
+                                 <= s.scheduled_start_time_snapshot
+                            THEN 1
+                            ELSE 0
+                        END
+                        + s.scheduled_end_time_snapshot
+                    )
+                END AS is_after_scheduled_end,
+                CASE
+                    WHEN s.scheduled_start_time_snapshot IS NULL
+                      OR s.scheduled_end_time_snapshot IS NULL
+                    THEN TRUE
+                    ELSE clock.local_now <= (
+                        s.business_date
+                        + CASE
+                            WHEN s.scheduled_end_time_snapshot
+                                 <= s.scheduled_start_time_snapshot
+                            THEN 1
+                            ELSE 0
+                        END
+                        + s.scheduled_end_time_snapshot
+                        + INTERVAL '1 hour'
+                    )
+                END AS is_within_closing_window
+            FROM shifts s
+            CROSS JOIN (
+                SELECT
+                    CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta'
+                        AS local_now
+            ) clock
+            WHERE s.id = $1
+              AND s.store_id = $2
+            LIMIT 1
+            FOR UPDATE OF s
+        `;
+
+    const shiftResult = await client.query(
+      shiftQuery,
+      [id, storeId]
     );
 
+    const shift = shiftResult.rows[0];
+
+    if (!shift) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    if (shift.status !== "OPEN") {
+      throw createError(
+        "Shift sudah ditutup atau tidak aktif",
+        409
+      );
+    }
+
+    if (!shift.is_after_scheduled_end) {
+      throw createError(
+        "Shift belum dapat ditutup sebelum jadwal selesai",
+        409
+      );
+    }
+
+    if (!shift.is_within_closing_window) {
+      throw createError(
+        "Batas waktu penutupan shift adalah maksimal 1 jam setelah jadwal selesai",
+        409
+      );
+    }
+
+    const updateQuery = `
+            UPDATE shifts
+            SET
+                closing_cash = $1::numeric,
+                difference = $1::numeric - expected_cash,
+                status = 'CLOSED',
+                closed_at = NOW(),
+                updated_at = NOW()
+            WHERE id = $2
+              AND store_id = $3
+              AND status = 'OPEN'
+            RETURNING id
+        `;
+
+    const updateResult = await client.query(
+      updateQuery,
+      [closingCashValue, id, storeId]
+    );
+
+    if (updateResult.rowCount === 0) {
+      throw createError(
+        "Shift gagal ditutup karena statusnya sudah berubah",
+        409
+      );
+    }
+
+    const resultQuery = `
+            SELECT
+                s.id,
+                s.store_id,
+                s.user_id,
+                s.schedule_id,
+                s.business_date,
+                s.schedule_name_snapshot,
+                s.scheduled_start_time_snapshot,
+                s.scheduled_end_time_snapshot,
+                CASE
+                    WHEN st.opening_cash_enabled = TRUE
+                    THEN s.opening_cash
+                    ELSE NULL
+                END AS opening_cash,
+                s.expected_cash,
+                s.closing_cash,
+                s.difference,
+                s.status,
+                s.opened_at,
+                s.closed_at,
+                s.created_at,
+                s.updated_at
+            FROM shifts s
+            INNER JOIN stores st ON st.id = s.store_id
+            WHERE s.id = $1
+              AND s.store_id = $2
+            LIMIT 1
+        `;
+
+    const result = await client.query(
+      resultQuery,
+      [id, storeId]
+    );
+
+    await client.query("COMMIT");
+
     return result.rows[0] || null;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      console.error(
+        "Rollback close shift gagal:",
+        rollbackError
+      );
+    }
+
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
-async function findOpenForUpdate(client, userId, storeId) {
-    const result = await client.query(
-        `
+async function findOpenForUpdate(
+  client,
+  userId,
+  storeId
+) {
+  const query = `
         SELECT
             id,
             store_id,
             user_id,
             schedule_id,
+            business_date,
             opening_cash,
             expected_cash,
-            closing_cash,
-            difference,
             status,
             opened_at,
             closed_at
@@ -246,41 +643,83 @@ async function findOpenForUpdate(client, userId, storeId) {
         WHERE user_id = $1
           AND store_id = $2
           AND status = 'OPEN'
-        ORDER BY opened_at DESC
         LIMIT 1
         FOR UPDATE
-        `,
-        [userId, storeId]
-    );
+    `;
 
-    return result.rows[0] || null;
+  const result = await client.query(
+    query,
+    [userId, storeId]
+  );
+
+  return result.rows[0] || null;
 }
 
-async function increaseExpectedCash(client, shiftId, amount) {
-    const result = await client.query(
-        `
+async function increaseExpectedCash(
+  client,
+  shiftId,
+  amount
+) {
+  const query = `
         UPDATE shifts
         SET
             expected_cash = expected_cash + $1,
             updated_at = NOW()
         WHERE id = $2
           AND status = 'OPEN'
-        RETURNING id, expected_cash, status
-        `,
-        [amount, shiftId]
-    );
+        RETURNING
+            id,
+            expected_cash,
+            status
+    `;
 
-    return result.rows[0] || null;
+  const result = await client.query(
+    query,
+    [amount, shiftId]
+  );
+
+  return result.rows[0] || null;
 }
 
-async function findByIdForUpdate(client, id, storeId) {
-    const result = await client.query(
-        `
+async function decreaseExpectedCash(
+  client,
+  shiftId,
+  amount
+) {
+  const query = `
+        UPDATE shifts
+        SET
+            expected_cash = expected_cash - $1,
+            updated_at = NOW()
+        WHERE id = $2
+          AND status = 'OPEN'
+          AND expected_cash >= $1
+        RETURNING
+            id,
+            expected_cash,
+            status
+    `;
+
+  const result = await client.query(
+    query,
+    [amount, shiftId]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function findByIdForUpdate(
+  client,
+  id,
+  storeId
+) {
+  const query = `
         SELECT
             id,
             store_id,
             user_id,
             schedule_id,
+            business_date,
             opening_cash,
             expected_cash,
             closing_cash,
@@ -293,41 +732,33 @@ async function findByIdForUpdate(client, id, storeId) {
           AND store_id = $2
         LIMIT 1
         FOR UPDATE
-        `,
-        [id, storeId]
-    );
+    `;
 
-    return result.rows[0] || null;
+  const result = await client.query(
+    query,
+    [id, storeId]
+  );
+
+  return result.rows[0] || null;
 }
 
-async function decreaseExpectedCash(client, shiftId, amount) {
-    const result = await client.query(
-        `
-        UPDATE shifts
-        SET
-            expected_cash = expected_cash - $1,
-            updated_at = NOW()
-        WHERE id = $2
-          AND status = 'OPEN'
-          AND expected_cash >= $1
-        RETURNING id, expected_cash, status
-        `,
-        [amount, shiftId]
-    );
-
-    return result.rows[0] || null;
-}
-
-async function findAllByStoreForOwner(client, storeId) {
-    const result = await client.query(
-        `
+async function findAllByStoreForOwner(
+  client,
+  storeId
+) {
+  const query = `
         SELECT
             s.id,
             s.store_id,
             s.user_id,
             s.schedule_id,
+            s.business_date,
+            s.schedule_name_snapshot,
+            s.scheduled_start_time_snapshot,
+            s.scheduled_end_time_snapshot,
             CASE
-                WHEN st.opening_cash_enabled THEN s.opening_cash
+                WHEN st.opening_cash_enabled = TRUE
+                THEN s.opening_cash
                 ELSE NULL
             END AS opening_cash,
             s.expected_cash,
@@ -336,240 +767,75 @@ async function findAllByStoreForOwner(client, storeId) {
             s.status,
             s.opened_at,
             s.closed_at,
-            st.opening_cash_enabled,
+            COALESCE(
+                s.schedule_name_snapshot,
+                ss.shift_name
+            ) AS shift_name,
             u.username,
-            u.full_name,
-            ss.shift_name AS schedule_shift_name,
-            ss.start_time,
-            ss.end_time
+            u.full_name
         FROM shifts s
-        INNER JOIN stores st
-            ON st.id = s.store_id
-        INNER JOIN users u
-            ON u.id = s.user_id
-        LEFT JOIN shift_schedules ss
-            ON ss.id = s.schedule_id
+        INNER JOIN stores st ON st.id = s.store_id
+        LEFT JOIN shift_schedules ss ON ss.id = s.schedule_id
+        INNER JOIN users u ON u.id = s.user_id
         WHERE s.store_id = $1
-        ORDER BY
-            CASE
-                WHEN s.status = 'OPEN' THEN 0
-                ELSE 1
-            END,
-            s.opened_at DESC NULLS LAST,
-            s.created_at DESC
-        FOR UPDATE OF s
-        `,
-        [storeId]
-    );
+        ORDER BY s.opened_at DESC
+    `;
 
-    return result.rows;
+  const result = await client.query(query, [storeId]);
+
+  return result.rows;
 }
 
 async function findByIdForStoreForUpdate(
-    client,
-    shiftId,
-    storeId
+  client,
+  shiftId,
+  storeId
 ) {
-    const result = await client.query(
-        `
+  const query = `
         SELECT
             s.id,
             s.store_id,
             s.user_id,
             s.schedule_id,
-            CASE
-                WHEN st.opening_cash_enabled THEN s.opening_cash
-                ELSE NULL
-            END AS opening_cash,
+            s.business_date,
+            s.opening_cash,
             s.expected_cash,
             s.closing_cash,
             s.difference,
             s.status,
             s.opened_at,
             s.closed_at,
-            st.opening_cash_enabled,
+            s.schedule_name_snapshot,
+            s.scheduled_start_time_snapshot,
+            s.scheduled_end_time_snapshot,
             u.username,
-            u.full_name,
-            ss.shift_name AS schedule_shift_name,
-            ss.start_time,
-            ss.end_time
+            u.full_name
         FROM shifts s
-        INNER JOIN stores st
-            ON st.id = s.store_id
-        INNER JOIN users u
-            ON u.id = s.user_id
-        LEFT JOIN shift_schedules ss
-            ON ss.id = s.schedule_id
+        INNER JOIN users u ON u.id = s.user_id
         WHERE s.id = $1
           AND s.store_id = $2
+        LIMIT 1
         FOR UPDATE OF s
-        `,
-        [shiftId, storeId]
-    );
+    `;
 
-    return result.rows[0] || null;
-}
+  const result = await client.query(
+    query,
+    [shiftId, storeId]
+  );
 
-async function openFromSchedule({
-    scheduleId,
-    storeId,
-    userId,
-}) {
-    const client = await pool.connect();
-
-    try {
-        await client.query("BEGIN");
-
-        const scheduleResult = await client.query(
-            `
-            SELECT
-                ss.id,
-                ss.store_id,
-                ss.user_id,
-                ss.opening_cash,
-                ss.status,
-                ss.start_time,
-                st.opening_cash_enabled,
-                (
-                    (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::time
-                    < ss.start_time
-                ) AS is_before_start
-            FROM shift_schedules ss
-            INNER JOIN stores st
-                ON st.id = ss.store_id
-            WHERE ss.id = $1
-              AND ss.store_id = $2
-              AND ss.user_id = $3
-            FOR UPDATE OF ss
-            `,
-            [scheduleId, storeId, userId]
-        );
-
-        const schedule = scheduleResult.rows[0];
-
-        if (!schedule) {
-            const error = new Error(
-                "Jadwal shift tidak ditemukan atau bukan milik Anda"
-            );
-            error.statusCode = 404;
-            throw error;
-        }
-
-        if (schedule.status !== "SCHEDULED") {
-            const error = new Error(
-                "Jadwal shift tidak aktif atau sudah dibatalkan"
-            );
-            error.statusCode = 400;
-            throw error;
-        }
-
-        if (schedule.is_before_start) {
-            const startTime = String(schedule.start_time).slice(0, 5);
-            const error = new Error(
-                `Shift belum dapat dimulai. Jadwal mulai pukul ${startTime}.`
-            );
-            error.statusCode = 409;
-            throw error;
-        }
-
-        const openShiftResult = await client.query(
-            `
-            SELECT id
-            FROM shifts
-            WHERE store_id = $1
-              AND user_id = $2
-              AND status = 'OPEN'
-            LIMIT 1
-            `,
-            [storeId, userId]
-        );
-
-        if (openShiftResult.rows.length > 0) {
-            const error = new Error(
-                "Anda masih memiliki shift yang belum ditutup"
-            );
-            error.statusCode = 409;
-            throw error;
-        }
-
-        const openingCashEnabled =
-            schedule.opening_cash_enabled === true;
-
-        const openingCash = openingCashEnabled
-            ? Number(schedule.opening_cash || 0)
-            : 0;
-
-        const shiftResult = await client.query(
-            `
-            INSERT INTO shifts (
-                store_id,
-                user_id,
-                schedule_id,
-                opening_cash,
-                expected_cash,
-                status,
-                opened_at
-            )
-            VALUES ($1, $2, $3, $4, $4, 'OPEN', NOW())
-            RETURNING
-                id,
-                store_id,
-                user_id,
-                schedule_id,
-                opening_cash,
-                expected_cash,
-                closing_cash,
-                difference,
-                status,
-                opened_at,
-                closed_at
-            `,
-            [
-                storeId,
-                userId,
-                schedule.id,
-                openingCash,
-            ]
-        );
-
-        await client.query("COMMIT");
-
-        const shift = shiftResult.rows[0];
-
-        return {
-            ...shift,
-            opening_cash_enabled: openingCashEnabled,
-            opening_cash: openingCashEnabled
-                ? shift.opening_cash
-                : null,
-        };
-    } catch (error) {
-        try {
-            await client.query("ROLLBACK");
-        } catch (rollbackError) {
-            console.error(
-                "Rollback openFromSchedule gagal:",
-                rollbackError
-            );
-        }
-
-        throw error;
-    } finally {
-        client.release();
-    }
+  return result.rows[0] || null;
 }
 
 module.exports = {
-    findCurrentByUserId,
-    findById,
-    findAll,
-    create,
-    close,
-    findOpenForUpdate,
-    increaseExpectedCash,
-    findByIdForUpdate,
-    decreaseExpectedCash,
-    findAllByStoreForOwner,
-    findByIdForStoreForUpdate,
-    openFromSchedule,
+  findCurrentByUserId,
+  findById,
+  findAll,
+  openFromSchedule,
+  close,
+  findOpenForUpdate,
+  increaseExpectedCash,
+  decreaseExpectedCash,
+  findByIdForUpdate,
+  findAllByStoreForOwner,
+  findByIdForStoreForUpdate,
 };
