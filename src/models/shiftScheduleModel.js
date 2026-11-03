@@ -1,5 +1,5 @@
 
-const pool = require('../../config/db');
+const pool = require('../config/db');
 
 const createError = (message, statusCode = 400) => {
     const error = new Error(message);

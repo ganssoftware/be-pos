@@ -68,7 +68,7 @@ async function findProductPricingForCheckout(
         p.is_active,
         p.unit_id,
         base_unit.name AS base_unit_name,
-        base_unit.abbreviation AS base_unit_abbreviation,
+        base_unit.symbol AS base_unit_symbol,
 
         t2.id AS tier_2_id,
         t2.min_quantity AS tier_2_min_quantity,
@@ -81,7 +81,7 @@ async function findProductPricingForCheckout(
         t3.price AS tier_3_price,
         t3.is_active AS tier_3_active,
         package_unit.name AS tier_3_unit_name,
-        package_unit.abbreviation AS tier_3_unit_abbreviation,
+        package_unit.symbol AS tier_3_unit_symbol,
 
         CASE
           WHEN pb.id IS NOT NULL THEN 3

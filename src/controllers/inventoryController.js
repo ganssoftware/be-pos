@@ -121,7 +121,6 @@ async function stockIn(req, res, next) {
     try {
         const productId = req.body.product_id;
 
-        // Validasi product_id sebelum membuka koneksi.
         if (!productId) {
             return res.status(400).json({
                 success: false,
@@ -138,13 +137,11 @@ async function stockIn(req, res, next) {
             ? String(req.body.notes).trim()
             : null;
 
-        // Buka koneksi database.
         client = await pool.connect();
 
         await client.query("BEGIN");
         transactionStarted = true;
 
-        // Ambil data produk dan kunci baris selama transaksi.
         const product =
             await inventoryModel.findProductForUpdate(
                 client,
@@ -162,7 +159,6 @@ async function stockIn(req, res, next) {
             });
         }
 
-        // Produk tidak aktif tidak boleh ditambahkan stoknya.
         if (!product.is_active) {
             await client.query("ROLLBACK");
             transactionStarted = false;
@@ -173,7 +169,6 @@ async function stockIn(req, res, next) {
             });
         }
 
-        // Ambil inventory produk.
         const inventory =
             await inventoryModel.getInventoryForUpdate(
                 client,
@@ -191,7 +186,6 @@ async function stockIn(req, res, next) {
             });
         }
 
-        // Tambahkan stok.
         const updatedInventory =
             await inventoryModel.increaseStock(
                 client,
@@ -199,7 +193,6 @@ async function stockIn(req, res, next) {
                 quantity
             );
 
-        // Catat pergerakan stok.
         const movement =
             await inventoryModel.createMovement(
                 client,
@@ -214,7 +207,6 @@ async function stockIn(req, res, next) {
                 }
             );
 
-        // Simpan seluruh perubahan.
         await client.query("COMMIT");
         transactionStarted = false;
 
@@ -227,7 +219,6 @@ async function stockIn(req, res, next) {
             },
         });
     } catch (error) {
-        // Batalkan perubahan hanya jika transaksi masih aktif.
         if (client && transactionStarted) {
             try {
                 await client.query("ROLLBACK");
@@ -250,7 +241,6 @@ async function stockIn(req, res, next) {
 
         return next(error);
     } finally {
-        // Pastikan koneksi selalu dilepas.
         if (client) {
             client.release();
         }
@@ -320,7 +310,6 @@ async function adjustment(req, res, next) {
         const difference =
             newQuantity - oldQuantity;
 
-        // Tidak ada perubahan stok.
         if (difference === 0) {
             await client.query("ROLLBACK");
 
@@ -353,7 +342,6 @@ async function adjustment(req, res, next) {
                     productId,
                     type: "ADJUSTMENT",
 
-                    // Movement quantity selalu positif.
                     quantity: Math.abs(difference),
 
                     referenceType: "MANUAL",
