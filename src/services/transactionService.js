@@ -214,7 +214,7 @@ function resolveProductTier(product, item, primaryQuantityTotal) {
 
 
   const tier3Active = product.tier_3_active === true;
-  const tier3Minimum = parsePositiveNumber(product.tier_3_min_quantity);
+  const tier3Minimum = parsePositiveNumber(product.tier_3_unit_quantity);
   if (tier3Active && tier3Minimum !== null && primaryQuantityTotal >= tier3Minimum) {
     return {
       priceTier: 3,
