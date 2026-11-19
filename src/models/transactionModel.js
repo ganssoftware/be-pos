@@ -78,6 +78,7 @@ async function findProductPricingForCheckout(
         t3.id AS tier_3_id,
         t3.unit_id AS tier_3_unit_id,
         t3.unit_quantity AS tier_3_unit_quantity,
+        t3.min_quantity AS tier_3_min_quantity,
         t3.price AS tier_3_price,
         t3.is_active AS tier_3_active,
         package_unit.name AS tier_3_unit_name,

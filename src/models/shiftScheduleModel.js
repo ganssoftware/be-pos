@@ -1,4 +1,3 @@
-
 const pool = require('../config/db');
 
 const createError = (message, statusCode = 400) => {

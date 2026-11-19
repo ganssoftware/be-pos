@@ -193,132 +193,65 @@ async function resolveCheckoutShift({
 
 function resolveProductTier(product, item, primaryQuantityTotal) {
   const productName = product.name;
-
   const matchedTier = Number(product.matched_tier || 1);
-
   const baseUnitName = product.base_unit_name;
 
   if (!baseUnitName) {
-    throw createError(
-      `Satuan dasar produk "${productName}" tidak ditemukan.`
-    );
+    throw createError(`Satuan dasar produk "${productName}" tidak ditemukan.`);
   }
 
-  const baseUnitConversionFactor = 1;
-
-  const baseBarcode = product.scanned_barcode || product.barcode || null;
-
+  let baseQuantity = item.quantity;
   if (matchedTier === 3) {
     if (product.tier_3_active !== true) {
-      throw createError(
-        `Harga paket produk "${productName}" tidak aktif.`
-      );
+      throw createError(`Tier 3 produk "${productName}" tidak aktif.`);
     }
-
-    const packageQuantity = parsePositiveNumber(
-      product.tier_3_unit_quantity
-    );
-
+    const packageQuantity = parsePositiveNumber(product.tier_3_unit_quantity);
     if (packageQuantity === null) {
-      throw createError(
-        `Konversi satuan paket produk "${productName}" tidak valid.`
-      );
+      throw createError(`Konversi barcode kemasan produk "${productName}" tidak valid.`);
     }
+    baseQuantity = item.quantity * packageQuantity;
+  }
 
-    const packagePrice = validateProductPrice(
-      product.tier_3_price,
-      productName,
-      "Harga paket"
-    );
 
-    if (!product.tier_3_unit_name) {
-      throw createError(
-        `Satuan paket produk "${productName}" tidak ditemukan.`
-      );
-    }
-
-    const baseQuantity = item.quantity * packageQuantity;
-
-    if (
-      !Number.isFinite(baseQuantity) ||
-      baseQuantity <= 0
-    ) {
-      throw createError(
-        `Jumlah stok paket produk "${productName}" tidak valid.`
-      );
-    }
-
+  const tier3Active = product.tier_3_active === true;
+  const tier3Minimum = parsePositiveNumber(product.tier_3_min_quantity);
+  if (tier3Active && tier3Minimum !== null && primaryQuantityTotal >= tier3Minimum) {
     return {
       priceTier: 3,
-      price: packagePrice,
-      quantity: item.quantity,
+      price: validateProductPrice(product.tier_3_price, productName, "Harga Tier 3"),
+      quantity: baseQuantity,
       baseQuantity,
-      sellingUnitName: product.tier_3_unit_name,
-      unitConversionFactor: packageQuantity,
-      barcode: product.scanned_barcode || item.barcode || null,
-      costPrice: validateProductPrice(
-        product.purchase_price,
-        productName,
-        "Harga beli"
-      ),
+      sellingUnitName: baseUnitName,
+      unitConversionFactor: 1,
+      barcode: product.barcode || null,
+      costPrice: validateProductPrice(product.purchase_price, productName, "Harga beli"),
     };
   }
 
   const tier2Active = product.tier_2_active === true;
-
-  if (
-    tier2Active &&
-    primaryQuantityTotal >= Number(product.tier_2_min_quantity)
-  ) {
-    const minimumQuantity = parsePositiveNumber(
-      product.tier_2_min_quantity
-    );
-
-    if (minimumQuantity === null) {
-      throw createError(
-        `Batas minimum Tier 2 produk "${productName}" tidak valid.`
-      );
-    }
-
-    const tier2Price = validateProductPrice(
-      product.tier_2_price,
-      productName,
-      "Harga Tier 2"
-    );
-
+  const tier2Minimum = parsePositiveNumber(product.tier_2_min_quantity);
+  if (tier2Active && tier2Minimum !== null && primaryQuantityTotal >= tier2Minimum) {
     return {
       priceTier: 2,
-      price: tier2Price,
-      quantity: item.quantity,
-      baseQuantity: item.quantity,
+      price: validateProductPrice(product.tier_2_price, productName, "Harga Tier 2"),
+      quantity: baseQuantity,
+      baseQuantity,
       sellingUnitName: baseUnitName,
-      unitConversionFactor: baseUnitConversionFactor,
-      barcode: baseBarcode,
-      costPrice: validateProductPrice(
-        product.purchase_price,
-        productName,
-        "Harga beli"
-      ),
+      unitConversionFactor: 1,
+      barcode: product.barcode || null,
+      costPrice: validateProductPrice(product.purchase_price, productName, "Harga beli"),
     };
   }
 
   return {
     priceTier: 1,
-    price: validateProductPrice(
-      product.selling_price,
-      productName,
-      "Harga jual"
-    ),
-    quantity: item.quantity,
-    baseQuantity: item.quantity,
+    price: validateProductPrice(product.selling_price, productName, "Harga jual"),
+    quantity: baseQuantity,
+    baseQuantity,
     sellingUnitName: baseUnitName,
-    unitConversionFactor: baseUnitConversionFactor,
-    barcode: baseBarcode,
-    costPrice: validateProductPrice(
-      product.purchase_price,
-      productName,
-      "Harga beli"
-    ),
+    unitConversionFactor: 1,
+    barcode: product.barcode || null,
+    costPrice: validateProductPrice(product.purchase_price, productName, "Harga beli"),
   };
 }
 
@@ -433,15 +366,17 @@ async function checkout({
         );
       }
 
-      if (matchedTier === 1) {
-        const currentTotal =
-          primaryQuantityTotals.get(String(productId)) || 0;
-
-        primaryQuantityTotals.set(
-          String(productId),
-          currentTotal + quantity
-        );
+      let baseQuantityForPricing = quantity;
+      if (matchedTier === 3) {
+        const packageFactor = parsePositiveNumber(product.tier_3_unit_quantity);
+        if (product.tier_3_active !== true || packageFactor === null) {
+          throw createError(`Konfigurasi barcode kemasan produk "${product.name}" tidak valid.`);
+        }
+        baseQuantityForPricing *= packageFactor;
       }
+
+      const currentTotal = primaryQuantityTotals.get(String(productId)) || 0;
+      primaryQuantityTotals.set(String(productId), currentTotal + baseQuantityForPricing);
 
       preparedItems.push({
         product,
