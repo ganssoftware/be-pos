@@ -260,6 +260,7 @@ async function checkout({
   userId,
   role,
   customerId,
+  redeemPoints = 0,
   items,
   discount,
   tax,
@@ -516,7 +517,67 @@ async function checkout({
       group.inventory = inventory;
     }
 
-    if (!Array.isArray(payments) || payments.length === 0) {
+    let loyaltyCustomer = null;
+    let loyaltySettings = null;
+    let redeemedPoints = Number(redeemPoints || 0);
+    let loyaltyDiscount = 0;
+    let pointsEarned = 0;
+
+    if (!Number.isInteger(redeemedPoints) || redeemedPoints < 0) {
+      throw createError("Jumlah poin yang digunakan tidak valid.");
+    }
+
+    if (customerId) {
+      const customerResult = await client.query(
+        `SELECT id, name, is_active FROM customers
+         WHERE id = $1 AND store_id = $2 FOR UPDATE`,
+        [customerId, storeId]
+      );
+      loyaltyCustomer = customerResult.rows[0] || null;
+      if (!loyaltyCustomer || !loyaltyCustomer.is_active) {
+        throw createError("Member tidak ditemukan atau sudah nonaktif.", 404);
+      }
+      const settingsResult = await client.query(
+        `SELECT is_active, earn_amount, earn_points, point_value, minimum_redeem_points
+         FROM loyalty_settings WHERE store_id = $1 LIMIT 1`,
+        [storeId]
+      );
+      loyaltySettings = settingsResult.rows[0] || {
+        is_active: true, earn_amount: 10000, earn_points: 1,
+        point_value: 100, minimum_redeem_points: 100,
+      };
+      if (!loyaltySettings.is_active) {
+        if (redeemedPoints > 0) throw createError("Program loyalty sedang dinonaktifkan.");
+        redeemedPoints = 0;
+      }
+      const eligibleAmount = Math.max(0, subtotal - transactionDiscount);
+      pointsEarned = loyaltySettings.is_active
+        ? Math.floor(eligibleAmount / Number(loyaltySettings.earn_amount)) * Number(loyaltySettings.earn_points)
+        : 0;
+      if (redeemedPoints > 0) {
+        if (redeemedPoints < Number(loyaltySettings.minimum_redeem_points)) {
+          throw createError(`Minimal penukaran ${loyaltySettings.minimum_redeem_points} poin.`);
+        }
+        const balanceResult = await client.query(
+          `SELECT COALESCE(SUM(CASE
+             WHEN type IN ('earn','refund') THEN points
+             WHEN type = 'redeem' THEN -ABS(points)
+             WHEN type = 'adjustment' THEN points ELSE 0 END), 0)::INTEGER AS balance
+           FROM customer_points WHERE customer_id = $1 AND store_id = $2`,
+          [customerId, storeId]
+        );
+        const balance = Number(balanceResult.rows[0].balance || 0);
+        if (redeemedPoints > balance) throw createError("Saldo poin member tidak mencukupi.");
+        loyaltyDiscount = Math.min(redeemedPoints * Number(loyaltySettings.point_value), total);
+        if (loyaltyDiscount <= 0) throw createError("Nilai penukaran poin tidak valid.");
+      }
+    } else if (redeemedPoints > 0) {
+      throw createError("Pilih member terlebih dahulu untuk menggunakan poin.");
+    }
+
+    const finalTotal = roundMoney(total - loyaltyDiscount);
+
+    if (!Array.isArray(payments) || (payments.length === 0 && finalTotal > 0)) {
       throw createError(
         "Minimal terdapat satu pembayaran."
       );
@@ -601,7 +662,7 @@ async function checkout({
       });
     }
 
-    if (roundMoney(paymentTotal - total) !== 0) {
+    if (roundMoney(paymentTotal - finalTotal) !== 0) {
       throw createError(
         "Total pembayaran harus sama dengan total transaksi."
       );
@@ -616,9 +677,12 @@ async function checkout({
         customerId,
         transactionNumber: generateTransactionNumber(),
         subtotal,
-        discount: transactionDiscount,
+        discount: transactionDiscount + loyaltyDiscount,
         tax: transactionTax,
-        total,
+        total: finalTotal,
+        redeemedPoints,
+        pointsEarned,
+        loyaltyDiscount,
       }
     );
 
@@ -688,6 +752,25 @@ async function checkout({
       );
 
       createdPayments.push(createdPayment);
+    }
+
+    if (loyaltyCustomer && loyaltySettings?.is_active) {
+      if (redeemedPoints > 0) {
+        await client.query(
+          `INSERT INTO customer_points (store_id, customer_id, transaction_id, type, points, description)
+           VALUES ($1, $2, $3, 'redeem', $4, $5)`,
+          [storeId, customerId, transaction.id, redeemedPoints,
+           `Penukaran poin transaksi ${transaction.transaction_number}`]
+        );
+      }
+      if (pointsEarned > 0) {
+        await client.query(
+          `INSERT INTO customer_points (store_id, customer_id, transaction_id, type, points, description)
+           VALUES ($1, $2, $3, 'earn', $4, $5)`,
+          [storeId, customerId, transaction.id, pointsEarned,
+           `Poin dari transaksi ${transaction.transaction_number}`]
+        );
+      }
     }
 
     let updatedShift = shift;
@@ -1051,6 +1134,39 @@ async function reverseTransaction({
         "Transaksi ini sudah memiliki catatan reversal.",
         409
       );
+    }
+
+    if (transaction.customer_id) {
+      const earnedResult = await client.query(
+        `SELECT COALESCE(SUM(points), 0)::INTEGER AS points
+         FROM customer_points WHERE store_id = $1 AND customer_id = $2
+           AND transaction_id = $3 AND type = 'earn'`,
+        [storeId, transaction.customer_id, transaction.id]
+      );
+      const redeemedResult = await client.query(
+        `SELECT COALESCE(SUM(ABS(points)), 0)::INTEGER AS points
+         FROM customer_points WHERE store_id = $1 AND customer_id = $2
+           AND transaction_id = $3 AND type = 'redeem'`,
+        [storeId, transaction.customer_id, transaction.id]
+      );
+      const earned = Number(earnedResult.rows[0].points || 0);
+      const redeemed = Number(redeemedResult.rows[0].points || 0);
+      if (earned > 0) {
+        await client.query(
+          `INSERT INTO customer_points (store_id, customer_id, transaction_id, type, points, description)
+           VALUES ($1, $2, $3, 'redeem', $4, $5)`,
+          [storeId, transaction.customer_id, transaction.id, earned,
+           `Pembatalan earn poin karena ${actionLabel} ${transaction.transaction_number}`]
+        );
+      }
+      if (redeemed > 0) {
+        await client.query(
+          `INSERT INTO customer_points (store_id, customer_id, transaction_id, type, points, description)
+           VALUES ($1, $2, $3, 'refund', $4, $5)`,
+          [storeId, transaction.customer_id, transaction.id, redeemed,
+           `Pengembalian poin redeem karena ${actionLabel} ${transaction.transaction_number}`]
+        );
+      }
     }
 
     const updatedTransaction =

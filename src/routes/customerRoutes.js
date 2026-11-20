@@ -11,7 +11,7 @@ router.use(storeMiddleware);
 
 router.get("/search", customerController.searchCustomer);
 router.get("/", customerController.getCustomers);
-router.get("/loyalty/settings", roleMiddleware("owner"), customerController.getLoyaltySettings);
+router.get("/loyalty/settings", customerController.getLoyaltySettings);
 router.put("/loyalty/settings", roleMiddleware("owner"), customerController.updateLoyaltySettings);
 router.get("/:id/points", customerController.getPoints);
 router.get("/:id", customerController.getCustomerById);

@@ -10,6 +10,9 @@ async function create(client, {
   discount,
   tax,
   total,
+  redeemedPoints = 0,
+  pointsEarned = 0,
+  loyaltyDiscount = 0,
 }) {
   const result = await client.query(
     `
@@ -24,12 +27,15 @@ async function create(client, {
         discount,
         tax,
         total,
+        redeemed_points,
+        points_earned,
+        loyalty_discount,
         status
       )
       VALUES (
         $1, $2, $3, $4, $5,
         (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::DATE,
-        $6, $7, $8, $9, 'COMPLETED'
+        $6, $7, $8, $9, $10, $11, $12, 'COMPLETED'
       )
       RETURNING *
     `,
@@ -43,6 +49,9 @@ async function create(client, {
       discount,
       tax,
       total,
+      redeemedPoints,
+      pointsEarned,
+      loyaltyDiscount,
     ]
   );
 
@@ -223,6 +232,9 @@ async function findById(id, storeId) {
         t.discount,
         t.tax,
         t.total,
+        t.redeemed_points,
+        t.points_earned,
+        t.loyalty_discount,
         t.status,
         t.created_at
       FROM transactions t
@@ -337,6 +349,9 @@ async function findAll(
       t.discount,
       t.tax,
       t.total,
+      t.redeemed_points,
+      t.points_earned,
+      t.loyalty_discount,
       t.status,
       t.business_date,
       t.created_at,
@@ -409,6 +424,9 @@ async function findDetailById(
       t.discount,
       t.tax,
       t.total,
+      t.redeemed_points,
+      t.points_earned,
+      t.loyalty_discount,
       t.status,
       t.business_date,
       t.created_at,
@@ -502,6 +520,9 @@ async function findByIdForUpdate(client, id, storeId) {
         t.discount,
         t.tax,
         t.total,
+        t.redeemed_points,
+        t.points_earned,
+        t.loyalty_discount,
         t.status,
         t.created_at,
         u.username,

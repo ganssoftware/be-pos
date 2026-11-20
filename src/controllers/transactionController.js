@@ -35,6 +35,7 @@ async function checkout(req, res, next) {
   try {
     const {
       customer_id,
+      redeem_points,
       items,
       discount,
       tax,
@@ -113,6 +114,7 @@ async function checkout(req, res, next) {
       role: role,
 
       customerId: customer_id,
+      redeemPoints: redeem_points,
       items,
       discount,
       tax,
